@@ -1,0 +1,11 @@
+# CMake owns compilation/linking; R owns installation of the resulting DLL.
+# With OBJECTS empty, R's default shared-library recipe is a no-op.
+OBJECTS =
+CMAKE = @CMAKE@
+all: native-library
+.PHONY: native-library
+native-library:
+	"$(CMAKE)" --build build --target libopenusd --parallel @JOBS@
+	"$(CMAKE)" --install build --config Release > build/install.log
+	"$(R_HOME)/bin@R_ARCH_BIN@/@RSCRIPT@" ../tools/install-resources.R
+	cp "build/libopenusd@SUFFIX@" "$(SHLIB)"

@@ -1,0 +1,108 @@
+# libopenusd
+
+OpenUSD 26.08 packaged as a native R library, with Python disabled. The package
+builds the OpenUSD core into one DLL and registers both R calls and a versioned
+C API. It supplies USD stage/file-format handling, composition, and schema
+resources; a renderer remains responsible for translating its scene model to
+and from USD. There is no rayrender dependency or private serialized R payload.
+
+## Installation
+
+Install `RcppParallel` first. A CMake version of at least 3.27 and R's native
+compiler toolchain are required. The pinned source is included: installation
+requires no downloads and does not invoke Python. For example:
+
+```sh
+CMAKE=/opt/homebrew/bin/cmake LIBOPENUSD_JOBS=6 R CMD INSTALL libopenusd
+```
+
+`CMAKE` defaults to the executable on PATH; `LIBOPENUSD_JOBS` defaults to 2 to
+limit build memory. Linux uses the same build path. Windows includes
+`configure.win` and `Makevars.win.in` for Rtools/MinGW; it has not yet been
+validated on a Windows host. RcppParallel supplies TBB headers and its runtime,
+so another TBB installation is not required.
+
+The core is statically linked into the package DLL, and OpenUSD schema data is
+installed under `usd/`. The public headers contain only an opaque C interface;
+consumers do not link their own copy of OpenUSD or include its C++ SDK headers.
+The upstream license and third-party notices are retained. This is a development
+package, not a claim of CRAN submission readiness.
+
+## R interface
+
+```r
+library(libopenusd)
+scene = usd_from_usda('#usda 1.0\ndef Sphere "Ball" {\n double radius = 2\n}\n')
+usd_export(scene, "scene.usdc")
+usd_close(scene)
+
+# In another session, reopen the standard USD file.
+scene = usd_open("scene.usdc")
+cat(usd_to_usda(scene))
+usd_close(scene)
+```
+
+`usd_create()` creates an empty in-memory stage. `usd_export()` writes USDA,
+USDC, or USD selected by the extension. `flatten = TRUE` composes referenced
+layers into one layer; the default preserves the root layer and its composition
+arcs. `usd_open()` also reads USDZ through OpenUSD. USDZ packaging is not exposed.
+
+Export preserves standard USD data, including geometry, material networks,
+instancing, camera time samples, and asset references. It does **not** collect
+or copy external textures, volumes, or referenced layers. Relative paths must
+remain valid at the export destination. Anonymous text layers have no filesystem
+anchor; use absolute asset paths or open an authored file for relative references.
+Stage handles are process-local and must not be persisted with `saveRDS()`.
+
+## Registered native interface
+
+Consumer packages declare:
+
+```
+Imports: libopenusd
+LinkingTo: libopenusd
+```
+
+Load the namespace before retrieving the table, for example with
+`importFrom(libopenusd, usd_version)` in NAMESPACE. Then, on R's main thread:
+
+```cpp
+#include <libopenusd.h>
+
+const libopenusd_api_v1 *usd = libopenusd_get_api();
+libopenusd_stage *stage = usd->stage_open("scene.usdc");
+if (!stage) {
+    // Copy/report usd->last_error() using the consumer's error handling.
+}
+// Use stage_export() or stage_to_usda(), then:
+usd->stage_release(stage);
+```
+
+`libopenusd_get_api()` resolves the registered symbol
+`libopenusd_get_api_v1` with `R_GetCCallable()`. No OpenUSD or provider linker
+flags are needed. The table contains creation, file opening, USDA import,
+file/text export, error access, and matching release functions. This is a stage
+I/O API, not a binding for every individual C++ USD method. USDA text provides
+the initial general schema authoring/inspection interface.
+
+Failures return NULL/0 and a thread-local error message; C++ exceptions do not
+cross the ABI. Free text with `free_string()` and handles with `stage_release()`.
+After namespace loading/table acquisition on R's main thread, table operations
+can run on native worker threads. Concurrent writes to the same stage are not
+supported. Do not unload the provider while handles or function pointers remain.
+The full contract is in `inst/include/libopenusd/api.h`.
+
+## Validation
+
+Tests cover USDA/USDC round-trips, meshes, material connections, camera time
+samples, point instancing, volume asset references, relative-layer composition,
+flattening, error recovery, closed handles, and a separately compiled consumer
+using only `R_GetCCallable()`. Source installation, relocation, and fresh-session
+checks should accompany any upstream or build-system update.
+
+`usd_inspect()` reads typed custom data, selected default-time attributes, and
+child paths. Native R consumers can call `libopenusd_inspect()` from the installed
+`libopenusd.h` header after loading the namespace. This separate, registered
+`libopenusd_inspect_v1` interface uses R objects and runs on R's main thread; the
+existing versioned C stage API remains unchanged. Unsupported metadata types
+report an error instead of being silently converted.

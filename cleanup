@@ -1,0 +1,3 @@
+#!/bin/sh
+rm -rf src/build src/usd-install src/OpenUSD inst/usd
+rm -f src/Makevars src/Makevars.win src/libopenusd.so src/libopenusd.dll

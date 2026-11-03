@@ -1,0 +1,8 @@
+^air\.toml$
+^src/OpenUSD$
+^src/build$
+^src/usd-install$
+^inst/usd$
+^src/Makevars$
+^src/Makevars\.win$
+^src/\.cache$

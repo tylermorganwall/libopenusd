@@ -1,0 +1,24 @@
+Package: libopenusd
+Type: Package
+Title: 'OpenUSD' Scene Description Import and Export
+Version: 26.8-2
+Authors@R: c(
+    person("Tyler", "Morgan-Wall", email = "tylermw@gmail.com",
+        role = c("aut", "cre"),
+        comment = c(ORCID = "0000-0002-3131-3814")),
+    person("Pixar", role = c("aut", "cph"),
+        comment = "Bundled OpenUSD library"))
+Description: Provides the 'OpenUSD' 'C++' library for reading, composing,
+    and writing Universal Scene Description files <https://openusd.org/>.
+    Exposes stage import and export through R functions and a registered
+    native interface for rendering packages.
+License: file LICENSE
+Copyright: file inst/COPYRIGHTS
+Depends: R (>= 4.3.0)
+Imports: RcppParallel, Rcpp
+LinkingTo: Rcpp
+SystemRequirements: CMake (>= 3.27), GNU make
+Encoding: UTF-8
+NeedsCompilation: yes
+Roxygen: list(markdown = TRUE)
+Config/roxygen2/version: 8.0.0

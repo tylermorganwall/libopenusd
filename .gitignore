@@ -1,0 +1,22 @@
+# OpenUSD sources are extracted from the tracked tools/vendor archive.
+/src/OpenUSD/
+
+# CMake output, staged SDK, installed resources, and compiler caches.
+/src/build/
+/src/usd-install/
+/inst/usd/
+/src/.cache/
+
+# configure generates these from the tracked .in templates.
+/src/Makevars
+/src/Makevars.win
+
+# Native R package build products.
+/src/*.o
+/src/*.a
+/src/*.so
+/src/*.dll
+/src/*.dylib
+/src/symbols.rds
+
+.DS_Store
