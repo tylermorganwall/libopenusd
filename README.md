@@ -82,8 +82,8 @@ usd->stage_release(stage);
 `libopenusd_get_api_v1` with `R_GetCCallable()`. No OpenUSD or provider linker
 flags are needed. The table contains creation, file opening, USDA import,
 file/text export, error access, and matching release functions. This is a stage
-I/O API, not a binding for every individual C++ USD method. USDA text provides
-the initial general schema authoring/inspection interface.
+I/O API. Typed stage construction is provided separately by
+`libopenusd_write_stage_v1`, without a text intermediary.
 
 Failures return NULL/0 and a thread-local error message; C++ exceptions do not
 cross the ABI. Free text with `free_string()` and handles with `stage_release()`.
@@ -106,3 +106,39 @@ child paths. Native R consumers can call `libopenusd_inspect()` from the install
 `libopenusd_inspect_v1` interface uses R objects and runs on R's main thread; the
 existing versioned C stage API remains unchanged. Unsupported metadata types
 report an error instead of being silently converted.
+
+
+## Typed stage authoring
+
+Native R consumers can call `libopenusd_write_stage(document, filename)` from
+`libopenusd.h` after loading the namespace. The registered
+`libopenusd_write_stage_v1` entry point accepts R objects on R's main thread.
+It constructs a stage directly through OpenUSD and exports the requested file
+format. A `.usdc` export never creates or parses a USDA text stage. Arrays are
+copied directly into native typed storage; the composed stage resides in memory.
+
+The document is a named list with `default_prim` (an absolute prim path), `fps`,
+`end_time`, and `prims` (a nested list of nodes). Stages use Y-up, meters, and a
+starting time code of zero. Each node has a `kind` and `name`:
+
+- `prim`: `type`, `body` (nested nodes), and `metadata` (named list).
+- `attribute`: `type`, `value` (NULL for no default), `custom`, and `uniform`.
+  Optional `times` and `samples` author time samples, `connections` supplies
+  absolute property paths, and `interpolation` supplies mesh interpolation.
+- `relationship`: `targets`, a character vector of absolute USD paths.
+
+Supported attribute types are bool, int, float, double, string, token, asset,
+int2, float2, texCoord2f, float3, point3f, normal3f, color3f, vector3f, double3,
+quatf, quatd, quath, their array forms, and scalar matrix4d. Tuple matrices have
+one tuple per row; matrix4d uses the matrix's actual row/column layout.
+Quaternions use real, x, y, z order. Missing and nonfinite property values fail
+validation. Prim metadata supports nested named dictionaries; `apiSchemas`
+authors a prepended token list.
+
+For exact R metadata, a list with class `usd_r_object` and fields `value`,
+`fields`, and `templates` requests typed R encoding. The result retains R type,
+attributes, native array data, and explicit missing-value masks. `fields = TRUE`
+encodes a named list as dictionary fields; `templates = TRUE` omits field data
+while retaining type and attributes. This uses no RDS payload or text encoding.
+Environments, functions, and external pointers are rejected. Exceptions and
+OpenUSD diagnostics are returned as R errors after releasing native resources.

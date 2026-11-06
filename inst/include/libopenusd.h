@@ -27,4 +27,13 @@ static inline SEXP libopenusd_inspect(SEXP filename, SEXP selectors, SEXP proper
     inspect_type inspect = (inspect_type) R_GetCCallable("libopenusd", "libopenusd_inspect_v1");
     return inspect(filename, selectors, properties);
 }
+
+/* Main-thread typed stage authoring. Numeric arrays and metadata go directly to
+ * OpenUSD; no text serialization or temporary USDA stage is involved. */
+static inline SEXP libopenusd_write_stage(SEXP document, SEXP filename) {
+    typedef SEXP (*write_type)(SEXP, SEXP);
+    write_type write = (write_type) R_GetCCallable("libopenusd", "libopenusd_write_stage_v1");
+    return write(document, filename);
+}
+
 #endif

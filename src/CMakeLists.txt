@@ -20,7 +20,7 @@ set(PXR_SET_INTERNAL_NAMESPACE libopenusd_v26_08 CACHE STRING "" FORCE)
 set(PXR_OVERRIDE_PLUGINPATH_NAME LIBOPENUSD_PLUGIN_PATH CACHE STRING "" FORCE)
 add_subdirectory(OpenUSD)
 
-add_library(libopenusd MODULE bridge.cpp init.cpp inspect.cpp)
+add_library(libopenusd MODULE bridge.cpp init.cpp inspect.cpp author.cpp)
 target_compile_definitions(libopenusd PRIVATE PXR_STATIC)
 set_target_properties(libopenusd PROPERTIES PREFIX "" SUFFIX "${R_SHARED_SUFFIX}")
 target_include_directories(libopenusd PRIVATE

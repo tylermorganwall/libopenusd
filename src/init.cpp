@@ -4,6 +4,7 @@
 #include <R_ext/Visibility.h>
 #include "bridge.h"
 extern "C" SEXP libopenusd_inspect_R(SEXP, SEXP, SEXP);
+extern "C" SEXP libopenusd_write_stage_R(SEXP, SEXP);
 #include <climits>
 #include <cstring>
 
@@ -117,6 +118,7 @@ extern "C" SEXP libopenusd_stage_close_R(SEXP stage) {
 }
 
 static const R_CallMethodDef call_methods[] = {
+    {"libopenusd_write_stage_R", (DL_FUNC) &libopenusd_write_stage_R, 2},
     {"libopenusd_inspect_R", (DL_FUNC) &libopenusd_inspect_R, 3},
     {"libopenusd_initialize_R", (DL_FUNC) &libopenusd_initialize_R, 1},
     {"libopenusd_version_R", (DL_FUNC) &libopenusd_version_R, 0},
@@ -133,6 +135,8 @@ extern "C" void attribute_visible R_init_libopenusd(DllInfo *dll) {
     R_registerRoutines(dll, nullptr, call_methods, nullptr, nullptr);
     R_useDynamicSymbols(dll, FALSE);
     R_forceSymbols(dll, TRUE);
+    R_RegisterCCallable("libopenusd", "libopenusd_write_stage_v1",
+        (DL_FUNC) &libopenusd_write_stage_R);
     R_RegisterCCallable("libopenusd", "libopenusd_inspect_v1",
         (DL_FUNC) &libopenusd_inspect_R);
     R_RegisterCCallable("libopenusd", "libopenusd_get_api_v1",

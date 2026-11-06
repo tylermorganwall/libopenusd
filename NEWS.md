@@ -1,3 +1,9 @@
+# libopenusd 26.8-3
+
+## New features
+
+- Overall: Adds registered typed stage authoring through `libopenusd_write_stage_v1`. Native arrays, dictionaries, relationships, connections, and time samples are authored directly in OpenUSD and exported without a text intermediary.
+
 # libopenusd 26.8-2
 
 ## New features

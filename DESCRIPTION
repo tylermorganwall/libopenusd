@@ -1,7 +1,7 @@
 Package: libopenusd
 Type: Package
 Title: 'OpenUSD' Scene Description Import and Export
-Version: 26.8-2
+Version: 26.8-3
 Authors@R: c(
     person("Tyler", "Morgan-Wall", email = "tylermw@gmail.com",
         role = c("aut", "cre"),
