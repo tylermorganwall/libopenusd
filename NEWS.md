@@ -17,7 +17,8 @@
 - Overall: Uses the GNU make tools supplied by Rtools for the vendored Windows
   build, avoiding a requirement for a separate `mingw32-make` executable.
 - Overall: Fixes Windows GCC compilation by matching OpenUSD's constructor
-  implementation to the compiler-specific declarations in its headers.
+  implementation to its compiler-specific declarations, using Windows error-message
+  APIs, and recognizing UCRT size formats when checking buffered diagnostics.
 - Overall: Contains native fatal diagnostics at the provider boundary, preserves
   R's signal handlers, and keeps debug settings from terminating the R process.
   Native cleanup completes within the operation by default.

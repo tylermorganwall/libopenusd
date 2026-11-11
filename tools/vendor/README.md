@@ -35,6 +35,10 @@ selected by `attributes.h`. The source excludes the separate PE section
 dispatcher for these compilers so it does not reference undeclared MSVC-path
 types or run a second initialization mechanism.
 
+Windows error messages use `strerror_s` with every compiler, including GCC and
+Clang. Diagnostic format checking follows MinGW's stdio format dialect so UCRT
+size formats such as `%zu` are recognized without disabling compiler warnings.
+
 ## Native-only source bundle
 
 The archive retains the core native USD libraries and their schema/plugin

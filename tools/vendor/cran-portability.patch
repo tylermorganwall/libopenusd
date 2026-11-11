@@ -8014,7 +8014,7 @@
 +}
 --- /dev/null
 +++ b/pxr/base/arch/rDiagnostics.h
-@@ -0,0 +1,36 @@
+@@ -0,0 +1,41 @@
 +// Modified for libopenusd by Tyler Morgan-Wall, 2026: R embedding; see tools/vendor/README.md.
 +// R embedding support for libopenusd; no R API calls from native workers.
 +#ifndef LIBOPENUSD_DIAGNOSTICS_H
@@ -8027,7 +8027,12 @@
 +extern "C" {
 +#endif
 +#if defined(__GNUC__) || defined(__clang__)
++#if defined(__MINGW_PRINTF_FORMAT)
++// Match the format dialect selected by MinGW's stdio implementation.
++#define LIBOPENUSD_FORMAT(a, b) __attribute__((format(__MINGW_PRINTF_FORMAT, a, b)))
++#else
 +#define LIBOPENUSD_FORMAT(a, b) __attribute__((format(printf, a, b)))
++#endif
 +#else
 +#define LIBOPENUSD_FORMAT(a, b)
 +#endif
@@ -8061,3 +8066,18 @@
 +// Only the remaining Windows compilers use the PE section dispatcher below.
 +#elif defined(ARCH_OS_WINDOWS) && \
 +    !defined(ARCH_COMPILER_GCC) && !defined(ARCH_COMPILER_CLANG)
+--- a/pxr/base/arch/errno.cpp
++++ b/pxr/base/arch/errno.cpp
+@@ -0,0 +1 @@
++// Modified for libopenusd by Tyler Morgan-Wall, 2026: select the Windows error API by OS.
+@@ -42,0 +44,2 @@
++#elif defined(ARCH_OS_WINDOWS)
++    strerror_s(msg_buf, sizeof(msg_buf), errorCode);
+@@ -56,2 +58,0 @@
+-#elif !defined(ARCH_COMPILER_MSVC)
+-    strerror_r(errorCode, msg_buf, 256);
+@@ -59,2 +60,2 @@
+-    strerror_s(msg_buf, 256, errorCode);
+-#endif // _GNU_SOURCE
++    strerror_r(errorCode, msg_buf, sizeof(msg_buf));
++#endif
