@@ -53,3 +53,9 @@
   arrays before allocation.
 - Overall: Links Windows path utilities and keeps invalid-input errors safe when
   Rcpp and the package use different C++ standard libraries.
+- Overall: Reopens exported USDC files on Windows without a redundant filesystem
+  lookup of DOS device paths. Corrects MinGW format annotations and native
+  compiler warnings while retaining diagnostic checks.
+- Overall: Tracks native array allocations from their starting address, preserving
+  copy-on-write ownership and avoiding ambiguous Valgrind leak reports for cached
+  schema arrays.

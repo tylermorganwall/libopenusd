@@ -925,15 +925,17 @@
  //
  // Copyright 2016 Pixar
  //
-@@ -23,6 +25,7 @@
+@@ -21,8 +23,8 @@
+ #include <cstdio>
+ #include <cstdlib>
  #include <cerrno>
- #include <filesystem>
+-#include <filesystem>
  #include <memory>
 +#include <random>
  #include <utility>
  #include <vector>
  
-@@ -32,6 +35,7 @@
+@@ -32,6 +34,7 @@
  #if defined(ARCH_OS_WINDOWS)
  #include <functional>
  #include <io.h>
@@ -941,7 +943,33 @@
  #include <process.h>
  #include <sys/utime.h>
  #include <Windows.h>
-@@ -723,8 +727,9 @@
+@@ -668,14 +671,17 @@
+         dwSize = GetFinalPathNameByHandleW(hfile, filePath.data(), dwSize, VOLUME_NAME_DOS);
+     }
+ 
+-    if (dwSize != 0) {
+-        // Strip path prefix if necessary.
+-        // See https://learn.microsoft.com/en-us/dotnet/standard/io/file-path-formats
+-        // for format of DOS device paths.
+-
+-        auto canonicalPath = std::filesystem::canonical(
+-            std::filesystem::path(filePath.begin(), filePath.begin() + dwSize));
+-        result = ArchWindowsUtf16ToUtf8(canonicalPath.wstring());
++    if (dwSize != 0 && dwSize < filePath.size()) {
++        // The handle API has already resolved symlinks and normalized the path.
++        // MinGW's filesystem::canonical cannot resolve every DOS device path.
++        std::wstring path(filePath.data(), dwSize);
++        if (path.compare(0, 8, L"\\\\?\\UNC\\") == 0) {
++            path.replace(0, 8, L"\\\\");
++        } else if (path.size() >= 7 &&
++                   path.compare(0, 4, L"\\\\?\\") == 0 && path[5] == L':') {
++            path.erase(0, 4);
++        }
++        result = ArchWindowsUtf16ToUtf8(path);
+     }
+     return result;
+ #else
+@@ -723,8 +729,9 @@
      std::function<bool(const char* name)> func,
      int maxRetry = 1000)
  {
@@ -953,7 +981,7 @@
  
      std::string attempt;
  
-@@ -741,7 +746,7 @@
+@@ -741,7 +748,7 @@
      attempt = sTemplate;
      for (int retry = 0; retry != maxRetry; ++retry) {
          for (char *p = attempt.data() + xsPos; *p; ++p) {
@@ -962,7 +990,7 @@
          }
          // Invoke callback and if successful return the path.  Otherwise repeat
          // with a different random name for up to maxRetry times.
-@@ -1024,7 +1029,7 @@
+@@ -1024,7 +1031,7 @@
      int rval = posix_madvise(reinterpret_cast<void *>(alignedAddrInt),
                               len + (addrInt - alignedAddrInt), adviceMap[adv]);
      if (rval != 0) {
@@ -971,7 +999,7 @@
                  "ret=%d, errno=%d '%s'\n",
                  alignedAddrInt, len + (addrInt-alignedAddrInt),
                  rval, errno, ArchStrerror().c_str());
-@@ -1341,7 +1346,9 @@
+@@ -1341,7 +1348,9 @@
          } GenericReparseBuffer;
      };
  } REPARSE_DATA_BUFFER, *PREPARSE_DATA_BUFFER;
@@ -981,7 +1009,7 @@
  
  std::string ArchReadLink(const char* path)
  {
-@@ -1502,7 +1509,7 @@
+@@ -1502,7 +1511,7 @@
      int rval = posix_fadvise(fileno(file), offset, static_cast<off_t>(count),
                               adviceMap[adv]);
      if (rval != 0) {
@@ -1313,20 +1341,18 @@
          ptrdiff_t n = write(fd, msg + written, len - written);
          if (n < 0) {
              // retry if the write is interrupted by a signal.
-@@ -666,53 +631,9 @@
-         written += n;
-     }
+@@ -668,51 +633,7 @@
      errno = saved;
--}
--
+ }
+ 
 -// Write a long converted to decimal ASCII to a file descriptor.
 -void aswriteLong(int fd, long x)
 -{
 -    char buf[numericBufferSize];
 -    asitoa(buf, x);
 -    aswrite(fd, buf);
- }
- 
+-}
+-
 -// Write nDashes '-' characters to fd.  Async-signal-safe.
 -void aswriteDashes(int fd, int nDashes)
 -{
@@ -1376,7 +1402,7 @@
  
  // Build an argument list (async-safe).
  static bool
-@@ -834,99 +756,13 @@
+@@ -834,100 +756,14 @@
   * can be tested with ArchTestCrash(), which should crash with this
   * malloc corruption.
   */
@@ -1388,8 +1414,8 @@
 -    }
 -    return fork();
 -}
--#endif
--
+ #endif
+ 
 -#if defined(ARCH_OS_LINUX)
 -static int
 -nonLockingLinux__execve (const char *file,
@@ -1447,8 +1473,8 @@
 -    );
 -#else
 -#error Unknown architecture
- #endif
- 
+-#endif
+-
 -    if (result >= 0xfffffffffffff000) {
 -        errno = -result;
 -        result = (unsigned int)-1;
@@ -1471,11 +1497,12 @@
 -     return nonLockingLinux__execve (path, argv, __environ);
 -#else
 -     return execv(path, argv);
--#endif
--}
  #endif
+-}
+-#endif
  
  /*
+  * Return the base of a filename.
 @@ -967,6 +803,7 @@
   * only async-safe functions.
   */
@@ -1677,6 +1704,15 @@
  }
  
  void
+@@ -1702,7 +1434,7 @@
+         Arch_DemangleFunctionName(&symbolName);
+         const uintptr_t symbolOffset =
+             (uint64_t)(address - (uintptr_t)symbolAddress);
+-        return ArchStringPrintf("%s+%#0lx", symbolName.c_str(), symbolOffset);
++        return ArchStringPrintf("%s+%#0llx", symbolName.c_str(), static_cast<unsigned long long>(symbolOffset));
+     }
+     else {
+         return "<unknown>";
 @@ -1740,7 +1472,6 @@
      return Arch_GetStackTrace(frames);
  }
@@ -1685,6 +1721,17 @@
  static
  ArchStackTraceCallback*
  Arch_GetStackTraceCallback()
+@@ -1771,8 +1502,8 @@
+         if (skipUnknownFrames && symbolic == "<unknown>") {
+             continue;
+         }
+-        rv.push_back(ArchStringPrintf(" #%-3i 0x%016lx in %s",
+-                                      n++, frames[i], symbolic.c_str()));
++        rv.push_back(ArchStringPrintf(" #%-3i 0x%016llx in %s",
++                                      n++, static_cast<unsigned long long>(frames[i]), symbolic.c_str()));
+     }
+ 
+     return rv;
 @@ -1792,12 +1523,6 @@
      }
  }
@@ -1986,7 +2033,60 @@
      },
      {
          {"Data", "data",
-@@ -514,11 +516,11 @@
+@@ -239,7 +241,7 @@
+          1.0,
+          0.0},
+         0, 0,
+-        { 1,0,0, 0,1,0, 0,0,1 } // initialized as identity
++        {{ 1,0,0, 0,1,0, 0,0,1 }} // initialized as identity
+     },
+     {
+         {"Identity", "identity",
+@@ -250,7 +252,7 @@
+          1.0,
+          0.0},
+         0, 0,
+-        { 1,0,0, 0,1,0, 0,0,1 } // initialized as identity
++        {{ 1,0,0, 0,1,0, 0,0,1 }} // initialized as identity
+     },
+     {
+         {"Raw", "raw",
+@@ -261,7 +263,7 @@
+          1.0,
+          0.0},
+         0, 0,
+-        { 1,0,0, 0,1,0, 0,0,1 } // initialized as identity
++        {{ 1,0,0, 0,1,0, 0,0,1 }} // initialized as identity
+     },
+     {
+         {"Unknown", "unknown",
+@@ -272,7 +274,7 @@
+          1.0,
+          0.0},
+         0, 0,
+-        { 1,0,0, 0,1,0, 0,0,1 } // initialized as identity
++        {{ 1,0,0, 0,1,0, 0,0,1 }} // initialized as identity
+     }
+ };
+ 
+@@ -496,14 +498,14 @@
+ 
+ NcM33f NcGetRGBToXYZMatrix(const NcColorSpace* cs) {
+     if (!cs)
+-        return (NcM33f) {1,0,0, 0,1,0, 0,0,1};
++        return (NcM33f) {{1,0,0, 0,1,0, 0,0,1}};
+ 
+     return cs->rgbToXYZ;
+ }
+ 
+ NcM33f NcGetXYZToRGBMatrix(const NcColorSpace* cs) {
+     if (!cs)
+-        return (NcM33f) {1,0,0, 0,1,0, 0,0,1};
++        return (NcM33f) {{1,0,0, 0,1,0, 0,0,1}};
+ 
+     return _M3ffInvert(cs->rgbToXYZ);
+ }
+@@ -514,17 +516,17 @@
  void printMatrix(const NcM33f* m) {
      if (!m) return;
  
@@ -2003,6 +2103,13 @@
  }
  #endif
  
+ NcM33f NcGetRGBToRGBMatrix(const NcColorSpace* src, const NcColorSpace* dst) {
+     if (!dst || !src) {
+-        return (NcM33f){1,0,0,0,1,0,0,0,1};
++        return (NcM33f){{1,0,0,0,1,0,0,0,1}};
+     }
+ 
+     NcM33f toXYZ = NcGetRGBToXYZMatrix(src);
 --- a/pxr/base/js/rapidjson/internal/regex.h
 +++ b/pxr/base/js/rapidjson/internal/regex.h
 @@ -1,3 +1,5 @@
@@ -2885,6 +2992,46 @@
          }
      };
              
+@@ -933,9 +935,9 @@
+         }
+         else {
+             // Push any children and mark cur for postOrderVisit.
+-            if (pathNodeChildren.count(cur.pathNode)) {
+-                auto const &children =
+-                    pathNodeChildren.find(cur.pathNode).value();
++            auto childEntry = pathNodeChildren.find(cur.pathNode);
++            if (childEntry != pathNodeChildren.end()) {
++                auto const &children = childEntry.value();
+                 const uint32_t curIndex = static_cast<uint32_t>(stack.size()-1);
+                 // Push children in reverse order so that they appear in the
+                 // resulting call tree in forward order.
+@@ -1302,7 +1304,7 @@
+ {
+     string result;
+ 
+-    string str = TfStringPrintf("%ld", number);
++    string str = TfStringPrintf("%zu", number);
+     size_t n = str.size();
+ 
+     TF_FOR_ALL(it, str) {
+@@ -1432,7 +1434,7 @@
+     const size_t maxPercentageWidth = 15;
+ 
+     string fmt = TfStringPrintf(
+-        "%%-%lds %%%lds %%%lds\n",
++        "%%-%zus %%%zus %%%zus\n",
+         maxNameWidth, maxBytesWidth, maxPercentageWidth);
+ 
+     *rpt += TfStringPrintf(fmt.c_str(), "NAME", "BYTES", "%ROOT");
+@@ -1513,7 +1515,7 @@
+     }
+ 
+     out << TfStringPrintf(
+-        "%13s B %13s B %7ld samples    ",
++        "%13s B %13s B %7zu samples    ",
+         _GetAsCommaSeparatedString(node.nBytes).c_str(),
+         _GetAsCommaSeparatedString(node.nBytesDirect).c_str(),
+         node.nAllocations);
 --- a/pxr/base/tf/pxrCLI11/CLI11.h
 +++ b/pxr/base/tf/pxrCLI11/CLI11.h
 @@ -1,3 +1,5 @@
@@ -7474,7 +7621,22 @@
                               nBytes, _cur));
              }
          }
-@@ -1221,7 +1224,7 @@
+@@ -1149,8 +1152,12 @@
+     
+     template <class T>
+     vector<T> _Read(vector<T> *) {
+-        auto sz = Read<uint64_t>();
+-        vector<T> vec(sz);
++        const auto sz = Read<uint64_t>();
++        if (sz == 0) {
++            return {};
++        }
++        vector<T> vec;
++        vec.resize(sz);
+         ReadContiguous(vec.data(), sz);
+         return vec;
+     }
+@@ -1221,7 +1228,7 @@
      template <class T>
      inline T Read() {
          if constexpr (_IsBitwiseReadWrite<T>::value) {
@@ -7483,7 +7645,7 @@
              src.Read(&bits, sizeof(bits));
              return bits;
          }
-@@ -2000,7 +2003,10 @@
+@@ -2000,7 +2007,10 @@
      auto isIntegral = [](T fp) {
          constexpr int32_t max = std::numeric_limits<int32_t>::max();
          constexpr int32_t min = std::numeric_limits<int32_t>::lowest();
@@ -7495,7 +7657,7 @@
              static_cast<T>(static_cast<int32_t>(fp)) == fp;
      };    
      if (std::all_of(array.cdata(), array.cdata() + array.size(), isIntegral)) {
-@@ -2626,7 +2632,7 @@
+@@ -2626,7 +2636,7 @@
  
          std::lock_guard<std::mutex> lock(outputMutex);
  
@@ -7504,7 +7666,7 @@
                 ">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>\n"
                 "page map for %s\n"
                 "%" PRId64 " pages, %" PRId64 " used (%.1f%%), %" PRId64
-@@ -2645,13 +2651,13 @@
+@@ -2645,13 +2655,13 @@
          constexpr int wrapCol = 80;
          int col = 0;
          for (int64_t i = 0; i != npages; ++i, ++col) {
@@ -7521,7 +7683,7 @@
                 "<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<\n");
      }
  
-@@ -3826,7 +3832,7 @@
+@@ -3826,7 +3836,7 @@
      wd.Wait();
      if (i != numTokens) {
          TF_RUNTIME_ERROR("Crate file claims %zu tokens, found %zu",
@@ -8810,6 +8972,15 @@
              if (_ValidateSet(i->first, x)) {
                  _editor->Set(i->first, x);
              }
+@@ -942,7 +945,7 @@
+     std::pair<iterator, bool> _Insert(const value_type& value)
+     {
+         if (_Validate()) {
+-            const value_type& v = ValuePolicy::CanonicalizePair(_Owner(), value);
++            const value_type v = ValuePolicy::CanonicalizePair(_Owner(), value);
+             if (_ValidateInsert(v)) {
+                 std::pair<inner_iterator, bool> status = _editor->Insert(v);
+                 return std::make_pair(iterator(this, _Data(), status.first),
 --- a/pxr/usd/sdf/crateData.cpp
 +++ b/pxr/usd/sdf/crateData.cpp
 @@ -1,3 +1,4 @@
@@ -8933,6 +9104,15 @@
                          serial, _lastChangeSerialNumber);
          return;
      }
+@@ -5618,7 +5619,7 @@
+     size_t primPrototypeId = 1;
+ 
+     const auto generatePathName = [&primPrototypeId]() {
+-        return SdfPath(TfStringPrintf("/Flattened_Prototype_%lu", 
++        return SdfPath(TfStringPrintf("/Flattened_Prototype_%zu", 
+                                       primPrototypeId++));
+     };
+ 
 --- a/pxr/usd/usd/clip.cpp
 +++ b/pxr/usd/usd/clip.cpp
 @@ -1,3 +1,4 @@
@@ -9191,7 +9371,22 @@
  //
  // Copyright 2016 Pixar
  //
-@@ -247,8 +248,10 @@
+@@ -171,8 +172,14 @@
+ 
+ #elif defined(ARCH_COMPILER_GCC) || defined(ARCH_COMPILER_CLANG)
+ 
++#if defined(__MINGW32__)
++// The UCRT/MinGW formatter supports C99 size and pointer-difference formats.
+ #   define ARCH_PRINTF_FUNCTION(_fmt, _firstArg) \
++        __attribute__((format(gnu_printf, _fmt, _firstArg)))
++#else
++#   define ARCH_PRINTF_FUNCTION(_fmt, _firstArg) \
+         __attribute__((format(printf, _fmt, _firstArg)))
++#endif
+ #   define ARCH_SCANF_FUNCTION(_fmt, _firstArg)	\
+         __attribute__((format(scanf, _fmt, _firstArg)))
+ #   define ARCH_NOINLINE __attribute__((noinline))
+@@ -247,8 +254,10 @@
  
  #define _ARCH_CAT_NOEXPAND(a, b) a ## b
  #define _ARCH_CAT(a, b) _ARCH_CAT_NOEXPAND(a, b)
@@ -9203,7 +9398,7 @@
  
  #if defined(doxygen)
  
-@@ -263,12 +266,21 @@
+@@ -263,12 +272,21 @@
      unsigned int version:24;    // USD version
      unsigned int priority:8;    // Priority of function
  };
@@ -9226,7 +9421,7 @@
          reinterpret_cast<Arch_ConstructorEntry::Type>(&_name),                 \
          static_cast<unsigned>(PXR_VERSION),                                    \
          _priority                                                              \
-@@ -279,7 +291,7 @@
+@@ -279,7 +297,7 @@
  #   define ARCH_DESTRUCTOR(_name, _priority)                                   \
      static void _name();                                                       \
      static const Arch_ConstructorEntry _ARCH_CAT_NOEXPAND(arch_dtor_, _name)   \
@@ -9235,7 +9430,7 @@
          reinterpret_cast<Arch_ConstructorEntry::Type>(&_name),                 \
          static_cast<unsigned>(PXR_VERSION),                                    \
          _priority                                                              \
-@@ -341,7 +353,7 @@
+@@ -341,7 +359,7 @@
               std::addressof(_ARCH_CAT_NOEXPAND(arch_ctor_, _name));            \
      }                                                                          \
      }                                                                          \
@@ -9244,7 +9439,7 @@
      static void _name()
  
      // Emit a Arch_ConstructorEntry in the .pxrdtor section.
-@@ -360,7 +372,7 @@
+@@ -360,7 +378,7 @@
               std::addressof(_ARCH_CAT_NOEXPAND(arch_dtor_, _name));            \
      }                                                                          \
      }                                                                          \
@@ -10279,7 +10474,110 @@
  //
  // Copyright 2016 Pixar
  //
-@@ -1036,13 +1037,12 @@
+@@ -278,7 +279,8 @@
+     
+     /// Copy \p other.  The new array shares underlying data with \p other.
+     VtArray(VtArray const &other) : Vt_ArrayBase(other)
+-                                  , _data(other._data) {
++                                  , _data(other._data)
++                                  , _allocation(other._allocation) {
+         if (!_data)
+             return;
+ 
+@@ -293,8 +295,10 @@
+     /// Move from \p other.  The new array takes ownership of \p other's
+     /// underlying data.
+     VtArray(VtArray &&other) : Vt_ArrayBase(std::move(other))
+-                             , _data(other._data) {
++                             , _data(other._data)
++                             , _allocation(other._allocation) {
+         other._data = nullptr;
++        other._allocation = nullptr;
+     }
+ 
+     /// Initialize array from the contents of a \p initializerList.
+@@ -333,7 +337,9 @@
+         _DecRef();
+         static_cast<Vt_ArrayBase &>(*this) = std::move(other);
+         _data = other._data;
++        _allocation = other._allocation;
+         other._data = nullptr;
++        other._allocation = nullptr;
+         return *this;
+     }
+ 
+@@ -427,7 +433,7 @@
+             ::new (static_cast<void*>(newData + curSize)) value_type(
+                 std::forward<Args>(args)...);
+             _DecRef();
+-            _data = newData;
++            _SetNativeData(newData);
+         }
+         else {
+             ::new (static_cast<void*>(_data + curSize)) value_type(
+@@ -512,7 +518,7 @@
+             _data ? _AllocateCopy(_data, num, size()) : _AllocateNew(num);
+ 
+         _DecRef();
+-        _data = newData;
++        _SetNativeData(newData);
+     }
+ 
+     /// Return a non-const reference to the first element in this array.  The
+@@ -620,7 +626,7 @@
+         // If we created new data, clean up the old and move over to the new.
+         if (newData != _data) {
+             _DecRef();
+-            _data = newData;
++            _SetNativeData(newData);
+         }
+         // Adjust size.
+         _shapeData.totalSize = newSize;
+@@ -775,7 +781,7 @@
+                     newData + posOffset + count);
+                 // Drop the old data and fill the new elements.
+                 _DecRef();
+-                _data = newData;
++                _SetNativeData(newData);
+                 _shapeData.totalSize = newSize;
+                 std::forward<FillElemsFn>(fillElems)(
+                     newData + posOffset, newData + posOffset + count);
+@@ -790,7 +796,7 @@
+             std::uninitialized_copy(pos, cend(), newData + posOffset + count);
+             // Drop the old data and fill the new elements.
+             _DecRef();
+-            _data = newData;
++            _SetNativeData(newData);
+             _shapeData.totalSize = newSize;
+             std::forward<FillElemsFn>(fillElems)(
+                 newData + posOffset, newData + posOffset + count);
+@@ -870,7 +876,7 @@
+             TF_DEV_AXIOM(std::distance(newData, newMiddle) == 
+                          std::distance(_data, removeStart));
+             _DecRef();
+-            _data = newData;
++            _SetNativeData(newData);
+             _shapeData.totalSize = newSize;
+             return iterator(newMiddle);
+         }
+@@ -924,6 +930,7 @@
+     /// Swap the contents of this array with \p other.
+     void swap(VtArray &other) { 
+         std::swap(_data, other._data);
++        std::swap(_allocation, other._allocation);
+         std::swap(_shapeData, other._shapeData);
+         std::swap(_foreignSource, other._foreignSource);
+     }
+@@ -1016,7 +1023,7 @@
+         }
+         auto *newData = _AllocateCopy(_data, size(), size());
+         _DecRef();
+-        _data = newData;
++        _SetNativeData(newData);
+         return true;
+     }
+ 
+@@ -1036,13 +1043,12 @@
  
      value_type *_AllocateNew(size_t capacity) {
          TfAutoMallocTag2 tag("VtArray::_AllocateNew", __ARCH_PRETTY_FUNCTION__);
@@ -10299,3 +10597,287 @@
          void *data = ::operator new(numBytes);
          // Placement-new a control block.
          ::new (data) _ControlBlock(/*count=*/1, capacity);
+@@ -1071,8 +1077,7 @@
+                      p != e; ++p) {
+                     p->~value_type();
+                 }
+-                ::operator delete(static_cast<void *>(
+-                                      std::addressof(_GetControlBlock(_data))));
++                ::operator delete(static_cast<void *>(_allocation));
+             }
+         }
+         else {
+@@ -1086,9 +1091,18 @@
+         }
+         _foreignSource = nullptr;
+         _data = nullptr;
++        _allocation = nullptr;
+     }
+     
++    void _SetNativeData(value_type *data) {
++        _data = data;
++        _allocation = data ? std::addressof(_GetControlBlock(data)) : nullptr;
++    }
++
+     value_type *_data;
++    // Native allocation ownership includes the refcount header before _data.
++    // Foreign arrays are owned by _foreignSource and keep this pointer null.
++    _ControlBlock *_allocation = nullptr;
+ };
+ 
+ // VtArray can transform if the underlying element type can.
+--- a/pxr/usd/sdf/types.cpp
++++ b/pxr/usd/sdf/types.cpp
+@@ -1,3 +1,4 @@
++// Modified for libopenusd by Tyler Morgan-Wall, 2026: R embedding; see tools/vendor/README.md.
+ //
+ // Copyright 2016 Pixar
+ //
+@@ -559,7 +560,7 @@
+         if (cast.IsEmpty()) {
+             errMsgs->push_back(
+                 TfStringPrintf("failed to cast array element "
+-                               "%zu: %s%s to <%s>",
++                               "%td: %s%s to <%s>",
+                                std::distance(valVec.begin(), begin),
+                                _GetDiagnosticStringForValue(*begin).c_str(),
+                                _GetKeyPathText(*keyPath).c_str(),
+--- a/pxr/usd/sdf/usdaFileFormat.cpp
++++ b/pxr/usd/sdf/usdaFileFormat.cpp
+@@ -1,3 +1,4 @@
++// Modified for libopenusd by Tyler Morgan-Wall, 2026: R embedding; see tools/vendor/README.md.
+ //
+ // Copyright 2016 Pixar
+ //
+@@ -273,7 +274,7 @@
+     const size_t toMB = 1048576;
+ 
+     if (fileSizeWarning > 0 && asset->GetSize() > (fileSizeWarning * toMB)) {
+-        TF_WARN("Performance warning: reading %lu MB text-based layer <%s>.",
++        TF_WARN("Performance warning: reading %zu MB text-based layer <%s>.",
+                 asset->GetSize() / toMB,
+                 resolvedPath.c_str());
+     }
+--- a/pxr/usd/usd/prim.h
++++ b/pxr/usd/usd/prim.h
+@@ -1,3 +1,4 @@
++// Modified for libopenusd by Tyler Morgan-Wall, 2026: R embedding; see tools/vendor/README.md.
+ //
+ // Copyright 2016 Pixar
+ //
+@@ -594,7 +595,7 @@
+         static_assert(std::is_base_of<UsdSchemaBase, SchemaType>::value,
+                       "Provided type must derive UsdSchemaBase.");
+         return _IsA(UsdSchemaRegistry::FindSchemaInfo<SchemaType>());
+-    };
++    }
+ 
+     /// This is an overload of \ref IsA that takes a TfType \p schemaType . 
+     USD_API
+@@ -651,7 +652,7 @@
+         }
+         return IsInFamily(schemaInfo->family, schemaInfo->version, 
+             versionPolicy);
+-    };
++    }
+ 
+     /// Overload for convenience of 
+     /// \ref IsInFamily(const TfToken&, UsdSchemaVersion, UsdSchemaRegistry::VersionPolicy) const "IsInFamily"
+@@ -881,7 +882,7 @@
+         }
+         return  HasAPIInFamily(schemaInfo->family, schemaInfo->version, 
+             versionPolicy);
+-    };
++    }
+ 
+     /// Overload for convenience of 
+     /// \ref HasAPIInFamily(const TfToken&, UsdSchemaVersion, UsdSchemaRegistry::VersionPolicy, const TfToken &) const "HasAPIInFamily"
+@@ -904,7 +905,7 @@
+         }
+         return  HasAPIInFamily(schemaInfo->family, schemaInfo->version, 
+             versionPolicy, instanceName);
+-    };
++    }
+ 
+     /// Overload for convenience of 
+     /// \ref HasAPIInFamily(const TfToken&, UsdSchemaVersion, UsdSchemaRegistry::VersionPolicy) const "HasAPIInFamily"
+--- a/pxr/usd/ar/notice.cpp
++++ b/pxr/usd/ar/notice.cpp
+@@ -1,3 +1,4 @@
++// Modified for libopenusd by Tyler Morgan-Wall, 2026: R embedding; see tools/vendor/README.md.
+ //
+ // Copyright 2021 Pixar
+ //
+@@ -26,7 +27,7 @@
+ ArNotice::ResolverNotice::~ResolverNotice() = default;
+ 
+ ArNotice::ResolverChanged::ResolverChanged()
+-    : ResolverChanged([](const ArResolverContext&) { return true; })
++    : _affects([](const ArResolverContext&) { return true; })
+ {
+ }
+ 
+--- a/pxr/usd/usdGeom/subset.cpp
++++ b/pxr/usd/usdGeom/subset.cpp
+@@ -1,3 +1,4 @@
++// Modified for libopenusd by Tyler Morgan-Wall, 2026: R embedding; see tools/vendor/README.md.
+ //
+ // Copyright 2016 Pixar
+ //
+@@ -821,7 +822,7 @@
+             valid = false;
+             if (reason) {
+                 *reason += TfStringPrintf("Number of unique indices at time %s "
+-                    "does not match the element count %ld.", 
++                    "does not match the element count %zu.", 
+                     TfStringify(t).c_str(), elementCount);
+             }
+         }
+@@ -832,7 +833,7 @@
+             valid = false;
+             if (reason) {
+                 *reason += TfStringPrintf("Found one or more indices that are "
+-                    "greater than the element count %ld at time %s.",
++                    "greater than the element count %zu at time %s.",
+                     elementCount, TfStringify(t).c_str());
+             }
+         }
+@@ -980,7 +981,7 @@
+                 valid = false;
+                 if (reason) {
+                     *reason += TfStringPrintf("Number of unique indices at time %s "
+-                        "does not match the element count %ld.",
++                        "does not match the element count %zu.",
+                         TfStringify(t).c_str(), elementCount);
+                 }
+             }
+@@ -1051,7 +1052,7 @@
+                                 valid = false;
+                                 if (reason) {
+                                     *reason += TfStringPrintf("Found one or more indices that are "
+-                                        "greater than the curve vertex count %lu at time %s.",
++                                        "greater than the curve vertex count %zu at time %s.",
+                                         curveVertexCounts.size(), TfStringify(t).c_str());
+                                 }
+                             } else if (segment[1] >= segmentCounts[curveIndex]) {
+@@ -1080,7 +1081,7 @@
+                     valid = false;
+                     if (reason) {
+                         *reason += TfStringPrintf("Number of unique indices at time %s "
+-                            "does not match the element count %ld.",
++                            "does not match the element count %zu.",
+                             TfStringify(t).c_str(), elementCount);
+                     }
+                 }
+@@ -1103,7 +1104,7 @@
+                 valid = false;
+                 if (reason) {
+                     *reason += TfStringPrintf("Found one or more indices that are "
+-                        "greater than the element count %ld at time %s.",
++                        "greater than the element count %zu at time %s.",
+                         elementCount, TfStringify(t).c_str());
+                 }
+             }
+--- a/pxr/usd/usdGeom/primvar.h
++++ b/pxr/usd/usdGeom/primvar.h
+@@ -1,3 +1,4 @@
++// Modified for libopenusd by Tyler Morgan-Wall, 2026: R embedding; see tools/vendor/README.md.
+ //
+ // Copyright 2016 Pixar
+ //
+@@ -867,7 +868,7 @@
+ 
+     if (!invalidIndexPositions.empty() && errString) {
+         *errString = TfStringPrintf(
+-            "Found %ld invalid indices into authored array of size %ld with" 
++            "Found %zu invalid indices into authored array of size %zu with" 
+             " element size of %i:", 
+             invalidIndexPositions.size(), 
+             authored.size(), elementSize);
+@@ -880,7 +881,7 @@
+             int authoredStartIndex = invalidIndex * elementSize;
+ 
+             *errString += TfStringPrintf(
+-            "\n\t Invalid index %i at position %ld refers to %s of the"
++            "\n\t Invalid index %i at position %zu refers to %s of the"
+             " authored array, which is out of bounds", 
+             invalidIndex,
+             invalidIndexPositions[i],
+--- a/pxr/base/arch/symbols.cpp
++++ b/pxr/base/arch/symbols.cpp
+@@ -1,3 +1,4 @@
++// Modified for libopenusd by Tyler Morgan-Wall, 2026: R embedding; see tools/vendor/README.md.
+ //
+ // Copyright 2016 Pixar
+ //
+@@ -95,7 +96,7 @@
+         line.SizeOfStruct = sizeof(IMAGEHLP_LINE64);
+ 
+         DWORD64 dwAddress = (DWORD64)address;
+-        SymFromAddr(process, dwAddress, NULL, symbol);
++        const bool haveSymbol = SymFromAddr(process, dwAddress, NULL, symbol);
+         if (!SymGetLineFromAddr64(process, dwAddress,
+                                   &displacement, &line)) {
+             return false;
+@@ -111,11 +112,11 @@
+         }
+ 
+         if (symbolName) {
+-            *symbolName = symbol->Name ? symbol->Name : "";
++            *symbolName = haveSymbol ? symbol->Name : "";
+         }
+ 
+         if (symbolAddress) {
+-            *symbolAddress = (void*)symbol->Address;
++            *symbolAddress = haveSymbol ? (void*)symbol->Address : nullptr;
+         }
+     }
+     return true;
+--- a/pxr/base/ts/regressionPreventer.h
++++ b/pxr/base/ts/regressionPreventer.h
+@@ -1,3 +1,4 @@
++// Modified for libopenusd by Tyler Morgan-Wall, 2026: R embedding; see tools/vendor/README.md.
+ //
+ // Copyright 2024 Pixar
+ //
+@@ -43,7 +44,7 @@
+     /// knot is the one that is being edited in an interactive case.  Batch
+     /// cases can't use these modes because we are adjusting an existing spline,
+     /// rather than editing a single knot.
+-    enum TS_API InteractiveMode
++    enum InteractiveMode
+     {
+         /// Shorten the proposed tangents of the active knot so that there is no
+         /// regression, leaving the neighbor tangents alone.
+--- a/pxr/base/ts/binary.cpp
++++ b/pxr/base/ts/binary.cpp
+@@ -1,3 +1,4 @@
++// Modified for libopenusd by Tyler Morgan-Wall, 2026: R embedding; see tools/vendor/README.md.
+ //
+ // Copyright 2024 Pixar
+ //
+@@ -90,7 +91,7 @@
+             _WriteBytes<uint32_t>(
+                 buf, static_cast<uint32_t>(data.knots.size()));
+ 
+-            for (const Ts_TypedKnotData<T> knot : data.knots)
++            for (const Ts_TypedKnotData<T>& knot : data.knots)
+             {
+                 // Flag byte:
+                 // Bit 0: whether dual-valued.
+--- a/pxr/base/ts/knot.cpp
++++ b/pxr/base/ts/knot.cpp
+@@ -1,3 +1,4 @@
++// Modified for libopenusd by Tyler Morgan-Wall, 2026: R embedding; see tools/vendor/README.md.
+ //
+ // Copyright 2024 Pixar
+ //
+@@ -450,7 +451,7 @@
+     template <typename T>
+     struct _ValueChecker
+     {
+-        void operator()(const VtValue value, bool* const ok)
++        void operator()(const VtValue& value, bool* const ok)
+         {
+             *ok = true;
+ 

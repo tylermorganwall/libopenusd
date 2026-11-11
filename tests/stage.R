@@ -70,6 +70,15 @@ for (extension in c("usda", "usdc")) {
   stopifnot(grepl("xformOp:translate.timeSamples", flattened, fixed = TRUE))
   usd_close(restored)
 }
+# Windows handle paths must reopen correctly, including spaces and UTF-8 names.
+unicode_dir = file.path(workspace, "scene files")
+dir.create(unicode_dir)
+unicode_path = file.path(unicode_dir, "caf\u00e9.usdc")
+usd_export(stage, unicode_path)
+restored = usd_open(unicode_path)
+stopifnot(identical(usd_to_usda(restored), canonical))
+usd_close(restored)
+
 magic = readBin(file.path(workspace, "scene.usdc"), "raw", n = 8L)
 stopifnot(identical(rawToChar(magic), "PXR-USDC"))
 

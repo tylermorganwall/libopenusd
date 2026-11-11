@@ -113,3 +113,18 @@ full alignment even when it exceeds TBB's cache-line allocation alignment.
 Mapped zero-byte crate reads return before pointer arithmetic or memcpy, and
 crate spec records initialize their enum before robin-map insertion can swap it.
 Oversized VtArray allocations throw before passing an impossible size to new.
+
+Windows file-handle paths are already resolved by `GetFinalPathNameByHandleW`.
+The native path helper converts DOS-device drive and UNC prefixes directly,
+without a second `std::filesystem::canonical` lookup that fails under MinGW.
+The shared printf annotation uses MinGW's C99-compatible dialect; actual
+size/pointer formats, aggregate initializers, and copied temporaries are corrected
+without warning suppression. Empty serialized vectors return before a byte read.
+
+VtArray retains the native allocation's start alongside its element pointer and
+uses that owning pointer for deallocation. Copies, moves, swaps, and detachments
+preserve ownership; foreign arrays retain their existing external owner. This
+adds one pointer to the private array representation. It makes cached schema
+allocations reachable to Valgrind, which otherwise sees only pointers past the
+reference-count header and reports them as possibly lost. No leak suppressions or
+Valgrind-specific compilation modes are used. The package's public C API is unchanged.
