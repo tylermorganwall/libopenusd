@@ -8051,3 +8051,13 @@
 +void LibOpenUsdCheckFailure();
 +#endif
 +#endif
+--- a/pxr/base/arch/attributes.cpp
++++ b/pxr/base/arch/attributes.cpp
+@@ -0,0 +1 @@
++// Modified for libopenusd by Tyler Morgan-Wall, 2026: match constructor dispatch to attributes.h.
+@@ -257 +258,4 @@
+-#elif defined(ARCH_OS_WINDOWS)
++// GCC and Clang use constructor/destructor attributes from attributes.h.
++// Only the remaining Windows compilers use the PE section dispatcher below.
++#elif defined(ARCH_OS_WINDOWS) && \
++    !defined(ARCH_COMPILER_GCC) && !defined(ARCH_COMPILER_CLANG)

@@ -355,17 +355,27 @@ if (prepared$changed) {
 }
 writeLines(source_digest, source_stamp)
 
-# CMake caches bind to their source directory. Discard generated build/install
-# trees from the former src/CMakeLists.txt layout before configuring this one.
+# Rtools provides GNU make and a Unix shell, just like R's package build.
+# MinGW Makefiles instead searches for mingw32-make, absent on win-builder.
+generator = "Unix Makefiles"
+# CMake caches bind to both their source directory and generator.
 cache_path = "src/build/CMakeCache.txt"
 if (file.exists(cache_path)) {
-  cache_home = grep(
+  cache = readLines(cache_path, warn = FALSE)
+  cache_home = sub(
     "^CMAKE_HOME_DIRECTORY:INTERNAL=",
-    readLines(cache_path, warn = FALSE),
-    value = TRUE
+    "",
+    grep("^CMAKE_HOME_DIRECTORY:INTERNAL=", cache, value = TRUE)
   )
-  cache_home = sub("^CMAKE_HOME_DIRECTORY:INTERNAL=", "", cache_home)
-  if (!identical(cache_home, build_source_dir)) {
+  cache_generator = sub(
+    "^CMAKE_GENERATOR:INTERNAL=",
+    "",
+    grep("^CMAKE_GENERATOR:INTERNAL=", cache, value = TRUE)
+  )
+  if (
+    !identical(cache_home, build_source_dir) ||
+      !identical(cache_generator, generator)
+  ) {
     unlink(c("src/build", "src/usd-install", "inst/usd"), recursive = TRUE)
   }
 }
@@ -407,7 +417,7 @@ build_args = c(
   "-B",
   "src/build",
   "-G",
-  if (windows) "MinGW Makefiles" else "Unix Makefiles",
+  generator,
   "-DCMAKE_BUILD_TYPE=Release",
   paste0("-DOPENUSD_SOURCE_DIR=", source_dir),
   "-DBUILD_SHARED_LIBS=OFF",

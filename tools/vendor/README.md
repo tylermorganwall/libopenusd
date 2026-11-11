@@ -30,6 +30,11 @@ Console targets use a null FILE pointer understood only by the diagnostic
 adapter. Real file targets retain their output and flush behavior. No adapter
 consults or writes the process standard streams, including debug output.
 
+Windows GCC and Clang builds use the compiler constructor/destructor attributes
+selected by `attributes.h`. The source excludes the separate PE section
+dispatcher for these compilers so it does not reference undeclared MSVC-path
+types or run a second initialization mechanism.
+
 ## Native-only source bundle
 
 The archive retains the core native USD libraries and their schema/plugin
