@@ -8,7 +8,7 @@ and from USD. There is no rayrender dependency or private serialized R payload.
 
 ## Installation
 
-Install `RcppParallel` first. A CMake version of at least 3.27 and R's native
+Install `RcppParallel` first. A CMake version of at least 3.22 and R's native
 compiler toolchain are required. The pinned source is included: installation
 requires no downloads and does not invoke Python. For example:
 

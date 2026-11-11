@@ -240,6 +240,7 @@ if (length(arguments)) {
 # Configure the native dependency using the same architecture and compiler as R.
 # Respect an explicit override; otherwise inspect every PATH entry before
 # trying standard macOS installations that GUI R sessions may not inherit.
+cmake_minimum = "3.22"
 override = Sys.getenv("CMAKE")
 if (nzchar(override)) {
   candidates = c(unname(Sys.which(override)), path.expand(override))
@@ -265,6 +266,7 @@ if (nzchar(override)) {
   }
 }
 cmake = ""
+cmake_versions = character()
 for (candidate in unique(candidates[nzchar(candidates)])) {
   if (!file.exists(candidate)) {
     next
@@ -286,7 +288,8 @@ for (candidate in unique(candidates[nzchar(candidates)])) {
     next
   }
   version = sub("^cmake version ([0-9.]+).*$", "\\1", version_line[1L])
-  if (utils::compareVersion(version, "3.27") >= 0) {
+  cmake_versions = c(cmake_versions, paste0(candidate, " (", version, ")"))
+  if (utils::compareVersion(version, cmake_minimum) >= 0) {
     cmake = normalizePath(candidate, winslash = "/", mustWork = TRUE)
     break
   }
@@ -297,10 +300,19 @@ if (!nzchar(cmake)) {
       paste0(
         "CMAKE=",
         override,
-        " does not identify a working CMake >= 3.27. Update or unset CMAKE."
+        " does not identify a working CMake >= ",
+        cmake_minimum,
+        ". Update or unset CMAKE."
       )
     } else {
-      "CMake >= 3.27 is required. Install it or set CMAKE to a newer executable."
+      paste0(
+        "CMake >= ",
+        cmake_minimum,
+        " is required. Install it or set CMAKE to a newer executable."
+      )
+    },
+    if (length(cmake_versions)) {
+      paste0(" Detected: ", paste(unique(cmake_versions), collapse = "; "), ".")
     }
   )
 }

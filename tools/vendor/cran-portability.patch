@@ -9947,3 +9947,44 @@
  
  template<class Key, class HashFn, class EqualKey, class Alloc>
  inline void
+--- a/pxr/base/arch/library.cpp
++++ b/pxr/base/arch/library.cpp
+@@ -1,3 +1,4 @@
++// Modified for libopenusd by Tyler Morgan-Wall, 2026: R embedding; see tools/vendor/README.md.
+ //
+ // Copyright 2016 Pixar
+ //
+@@ -72,7 +73,8 @@
+ void* ArchLibraryGetSymbolAddress(void* handle, const char* name)
+ {
+ #if defined(ARCH_OS_WINDOWS)
+-    return GetProcAddress(reinterpret_cast<HMODULE>(handle), name);
++    return reinterpret_cast<void*>(
++        GetProcAddress(reinterpret_cast<HMODULE>(handle), name));
+ #else
+     return dlsym(handle, name);
+ #endif
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -1,4 +1,5 @@
+-cmake_minimum_required(VERSION 3.27)
++# Modified for libopenusd: the configured native-only build supports CMake 3.22.
++cmake_minimum_required(VERSION 3.22...3.27)
+ 
+ project(usd)
+ 
+--- a/pxr/base/trace/event.h
++++ b/pxr/base/trace/event.h
+@@ -1,3 +1,4 @@
++// Modified for libopenusd by Tyler Morgan-Wall, 2026: R embedding; see tools/vendor/README.md.
+ //
+ // Copyright 2018 Pixar
+ //
+@@ -16,6 +17,7 @@
+ 
+ #include "pxr/base/arch/timing.h"
+ 
++#include <type_traits>
+ #include <utility>
+ 
+ PXR_NAMESPACE_OPEN_SCOPE

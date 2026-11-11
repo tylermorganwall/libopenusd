@@ -19,7 +19,7 @@ BugReports: https://github.com/tylermorganwall/libopenusd/issues
 Depends: R (>= 4.3.0)
 Imports: RcppParallel, Rcpp
 LinkingTo: Rcpp
-SystemRequirements: CMake (>= 3.27), GNU make
+SystemRequirements: CMake (>= 3.22), GNU make
 Encoding: UTF-8
 NeedsCompilation: yes
 Roxygen: list(markdown = TRUE)

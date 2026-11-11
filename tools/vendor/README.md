@@ -81,3 +81,13 @@ On macOS, only the constructor/destructor table descriptors carry Clang's
 `no_sanitize("address")` attribute. This preserves the contiguous linker-table
 layout by preventing redzones between descriptors. The dispatcher, callbacks,
 and other library globals remain instrumented. See the [Clang documentation](https://clang.llvm.org/docs/AddressSanitizer.html#disabling-instrumentation-with-attribute-no-sanitize-address).
+
+The native-only configuration supports CMake 3.22, including the 3.22.1
+version installed on Ubuntu 22.04 R-hub runners. The minimum-version range
+retains upstream's CMake 3.27 policy behavior on newer CMake installations.
+Optional upstream build modes outside this package's configuration are not
+covered by this lower requirement. Windows symbol lookup explicitly converts
+the function pointer returned by GetProcAddress to the library API's void pointer.
+
+The tracing event header includes `<type_traits>` directly for `std::aligned_storage`,
+rather than relying on transitive standard-library includes removed in newer libc++.

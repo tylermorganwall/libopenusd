@@ -11,14 +11,16 @@
   native R consumers.
 - `usd_messages()` Retrieves buffered OpenUSD warnings and debug messages,
   including diagnostics from native workers.
-- Overall: Finds a compatible CMake on PATH or in standard macOS locations when
-  the first executable is too old, while respecting an explicit `CMAKE` setting.
+- Overall: Supports CMake 3.22 and later for the native library build. Finds a
+  compatible CMake on PATH or in standard macOS locations when the first executable
+  is too old, while respecting an explicit `CMAKE` setting.
 - Overall: Finds RcppParallel's TBB DLL on Windows when no import library is shipped.
 - Overall: Uses the GNU make tools supplied by Rtools for the vendored Windows
   build, avoiding a requirement for a separate `mingw32-make` executable.
 - Overall: Fixes Windows GCC compilation by matching OpenUSD's constructor
   implementation to its compiler-specific declarations, using Windows error-message
-  APIs, and recognizing UCRT size formats when checking buffered diagnostics.
+  APIs, resolving Windows library symbols, and recognizing UCRT size formats
+  when checking buffered diagnostics.
 - Overall: Contains native fatal diagnostics at the provider boundary, preserves
   R's signal handlers, and keeps debug settings from terminating the R process.
   Native cleanup completes within the operation by default.
@@ -38,3 +40,4 @@
 - Overall: Fixes sanitizer failures in native hashing and macOS initialization,
   reclaims unused layer identities, and corrects uninitialized scalar removal.
   Updates deprecated APIs and resolves compiler portability warnings.
+- Overall: Includes the required type-traits header for tracing with newer libc++.
