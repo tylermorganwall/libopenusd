@@ -91,3 +91,18 @@ the function pointer returned by GetProcAddress to the library API's void pointe
 
 The tracing event header includes `<type_traits>` directly for `std::aligned_storage`,
 rather than relying on transitive standard-library includes removed in newer libc++.
+
+Token macros retain an explicit empty variadic tail during eager tuple expansion
+and use ordinary argument forwarding rather than GNU comma-pasting. Nested
+destructors use their injected class names consistently to avoid Clang's
+qualified-destructor-name diagnostic. Registration macros use standard source-line
+identifiers in place of `__COUNTER__`, retaining registration tags in helper names
+so generated tagged registrations on a shared line remain distinct.
+These changes retain C++17 support.
+
+Crate compression promotes scalar values to double before comparing with the
+int32 bounds, so rounding INT32_MAX up to 2^31 cannot permit an out-of-range cast.
+
+Singular tasks store nullary callables directly instead of passing them through
+`std::bind`, avoiding libstdc++'s deprecated `result_of` path on Intel compilers.
+Tasks with bound arguments retain their existing binding behavior.

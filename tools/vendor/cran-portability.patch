@@ -2471,10 +2471,9 @@
      }
      else {
 -        fprintf(outputFile, "%s", msg.c_str());
--    }
--    fflush(outputFile);
 +        LibOpenUsdFprintf(outputFile, "%s", msg.c_str());
-+    }
+     }
+-    fflush(outputFile);
 +    if (outputFile) fflush(outputFile);
  }
  
@@ -2494,6 +2493,15 @@
      }
  }
  
+@@ -496,7 +497,7 @@
+ }
+ 
+ template <bool B>
+-TfDebug::TimedScopeHelper<B>::~TimedScopeHelper()
++TfDebug::TimedScopeHelper<B>::TimedScopeHelper::~TimedScopeHelper()
+ {
+     if (active) {
+         stopwatch.Stop();
 --- a/pxr/base/tf/diagnostic.cpp
 +++ b/pxr/base/tf/diagnostic.cpp
 @@ -1,3 +1,4 @@
@@ -7467,7 +7475,19 @@
              src.Read(&bits, sizeof(bits));
              return bits;
          }
-@@ -2626,7 +2628,7 @@
+@@ -2000,7 +2002,10 @@
+     auto isIntegral = [](T fp) {
+         constexpr int32_t max = std::numeric_limits<int32_t>::max();
+         constexpr int32_t min = std::numeric_limits<int32_t>::lowest();
+-        return min <= fp && fp <= max &&
++        // Promote before comparing: INT32_MAX rounds up to 2^31 in float.
++        // That value must not reach the out-of-range integer conversion.
++        const double value = static_cast<double>(fp);
++        return min <= value && value <= max &&
+             static_cast<T>(static_cast<int32_t>(fp)) == fp;
+     };    
+     if (std::all_of(array.cdata(), array.cdata() + array.size(), isIntegral)) {
+@@ -2626,7 +2631,7 @@
  
          std::lock_guard<std::mutex> lock(outputMutex);
  
@@ -7476,7 +7496,7 @@
                 ">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>\n"
                 "page map for %s\n"
                 "%" PRId64 " pages, %" PRId64 " used (%.1f%%), %" PRId64
-@@ -2645,13 +2647,13 @@
+@@ -2645,13 +2650,13 @@
          constexpr int wrapCol = 80;
          int col = 0;
          for (int64_t i = 0; i != npages; ++i, ++col) {
@@ -7493,7 +7513,7 @@
                 "<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<\n");
      }
  
-@@ -3826,7 +3828,7 @@
+@@ -3826,7 +3831,7 @@
      wd.Wait();
      if (i != numTokens) {
          TF_RUNTIME_ERROR("Crate file claims %zu tokens, found %zu",
@@ -9154,7 +9174,19 @@
  //
  // Copyright 2016 Pixar
  //
-@@ -263,12 +264,21 @@
+@@ -247,8 +248,10 @@
+ 
+ #define _ARCH_CAT_NOEXPAND(a, b) a ## b
+ #define _ARCH_CAT(a, b) _ARCH_CAT_NOEXPAND(a, b)
++// Callers incorporate the registration name into prefix so distinct tagged
++// registrations on the same source line remain unique without __COUNTER__.
+ #define _ARCH_ENSURE_PER_LIB_INIT(T, prefix) \
+-    static Arch_PerLibInit<T> _ARCH_CAT(prefix, __COUNTER__)
++    static Arch_PerLibInit<T> _ARCH_CAT(prefix, __LINE__)
+ 
+ #if defined(doxygen)
+ 
+@@ -263,12 +266,21 @@
      unsigned int version:24;    // USD version
      unsigned int priority:8;    // Priority of function
  };
@@ -9177,7 +9209,7 @@
          reinterpret_cast<Arch_ConstructorEntry::Type>(&_name),                 \
          static_cast<unsigned>(PXR_VERSION),                                    \
          _priority                                                              \
-@@ -279,7 +289,7 @@
+@@ -279,7 +291,7 @@
  #   define ARCH_DESTRUCTOR(_name, _priority)                                   \
      static void _name();                                                       \
      static const Arch_ConstructorEntry _ARCH_CAT_NOEXPAND(arch_dtor_, _name)   \
@@ -9186,6 +9218,24 @@
          reinterpret_cast<Arch_ConstructorEntry::Type>(&_name),                 \
          static_cast<unsigned>(PXR_VERSION),                                    \
          _priority                                                              \
+@@ -341,7 +353,7 @@
+              std::addressof(_ARCH_CAT_NOEXPAND(arch_ctor_, _name));            \
+     }                                                                          \
+     }                                                                          \
+-    _ARCH_ENSURE_PER_LIB_INIT(Arch_ConstructorInit, _archCtorInit);            \
++    _ARCH_ENSURE_PER_LIB_INIT(Arch_ConstructorInit, _ARCH_CAT(_archCtorInit, _name));            \
+     static void _name()
+ 
+     // Emit a Arch_ConstructorEntry in the .pxrdtor section.
+@@ -360,7 +372,7 @@
+              std::addressof(_ARCH_CAT_NOEXPAND(arch_dtor_, _name));            \
+     }                                                                          \
+     }                                                                          \
+-    _ARCH_ENSURE_PER_LIB_INIT(Arch_ConstructorInit, _archCtorInit);            \
++    _ARCH_ENSURE_PER_LIB_INIT(Arch_ConstructorInit, _ARCH_CAT(_archCtorInit, _name));            \
+     static void _name()
+ 
+ #else
 --- a/pxr/base/arch/assumptions.cpp
 +++ b/pxr/base/arch/assumptions.cpp
 @@ -1,3 +1,4 @@
@@ -9312,6 +9362,44 @@
 +
  // Helper for TF_PP_STRINGIZE supplying macro expansion before pasting
  #define TF_PP_STRINGIZE_IMPL(x) #x
+ 
+@@ -39,7 +50,7 @@
+ /// zero-indexed.  For example, TF_PP_VARIADIC_ELEM(0, a, b, c) expands to a,
+ /// and TF_PP_VARIADIC_ELEM(1, a, b, c) expands to b.
+ #define TF_PP_VARIADIC_ELEM(n, ...) TF_PP_VARIADIC_ELEM_IMPL(n,__VA_ARGS__)
+-#define TF_PP_VARIADIC_ELEM_IMPL(n, ...) TF_PP_CAT(TF_PP_CAT(TF_PP_VAE_, n)(__VA_ARGS__,),)
++#define TF_PP_VARIADIC_ELEM_IMPL(n, ...) TF_PP_CAT(TF_PP_CAT(TF_PP_VAE_, n)(__VA_ARGS__,,),)
+ 
+ #else // NOT MSVC
+ 
+@@ -51,7 +62,9 @@
+ /// Expand to the \p n'th argument of the arguments following \p n,
+ /// zero-indexed.  For example, TF_PP_VARIADIC_ELEM(0, a, b, c) expands to a,
+ /// and TF_PP_VARIADIC_ELEM(1, a, b, c) expands to b.
+-#define TF_PP_VARIADIC_ELEM(n, ...) TF_PP_CAT(TF_PP_VAE_, n)(__VA_ARGS__,)
++// Keep a variadic tail even when eager tuple expansion selects the empty
++// second element of a single token before discarding that branch.
++#define TF_PP_VARIADIC_ELEM(n, ...) TF_PP_CAT(TF_PP_VAE_, n)(__VA_ARGS__,,)
+ 
+ #endif // ARCH_PREPROCESSOR_MSVC_TRADITIONAL
+ 
+@@ -277,7 +290,7 @@
+     TF_PP_FE_45, TF_PP_FE_46, TF_PP_FE_47, TF_PP_FE_48, TF_PP_FE_49, \
+     TF_PP_FE_50, TF_PP_FE_51, TF_PP_FE_52, TF_PP_FE_53, TF_PP_FE_54, \
+     TF_PP_FE_55, TF_PP_FE_56, TF_PP_FE_57, TF_PP_FE_58, TF_PP_FE_59, \
+-    TF_PP_FE_60, TF_PP_FE_61, TF_PP_FE_62, TF_PP_FE_63)(x, ##__VA_ARGS__),)
++    TF_PP_FE_60, TF_PP_FE_61, TF_PP_FE_62, TF_PP_FE_63)(x, __VA_ARGS__),)
+ 
+ #else // Not MSVC.
+ 
+@@ -298,7 +311,7 @@
+     TF_PP_FE_45, TF_PP_FE_46, TF_PP_FE_47, TF_PP_FE_48, TF_PP_FE_49, \
+     TF_PP_FE_50, TF_PP_FE_51, TF_PP_FE_52, TF_PP_FE_53, TF_PP_FE_54, \
+     TF_PP_FE_55, TF_PP_FE_56, TF_PP_FE_57, TF_PP_FE_58, TF_PP_FE_59, \
+-    TF_PP_FE_60, TF_PP_FE_61, TF_PP_FE_62, TF_PP_FE_63)(x, ##__VA_ARGS__)
++    TF_PP_FE_60, TF_PP_FE_61, TF_PP_FE_62, TF_PP_FE_63)(x, __VA_ARGS__)
+ 
+ #endif
  
 --- a/pxr/base/tf/enum.h
 +++ b/pxr/base/tf/enum.h
@@ -9988,3 +10076,98 @@
  #include <utility>
  
  PXR_NAMESPACE_OPEN_SCOPE
+--- a/pxr/base/tf/anyWeakPtr.h
++++ b/pxr/base/tf/anyWeakPtr.h
+@@ -1,3 +1,4 @@
++// Modified for libopenusd by Tyler Morgan-Wall, 2026: R embedding; see tools/vendor/README.md.
+ //
+ // Copyright 2016 Pixar
+ //
+@@ -223,7 +224,7 @@
+ }
+ 
+ template <class Ptr>
+-TfAnyWeakPtr::_PointerHolder<Ptr>::~_PointerHolder() {}
++TfAnyWeakPtr::_PointerHolder<Ptr>::_PointerHolder::~_PointerHolder() {}
+ 
+ template <class Ptr>
+ void
+--- a/pxr/base/tf/registryManager.h
++++ b/pxr/base/tf/registryManager.h
+@@ -1,3 +1,4 @@
++// Modified for libopenusd by Tyler Morgan-Wall, 2026: R embedding; see tools/vendor/README.md.
+ //
+ // Copyright 2016 Pixar
+ //
+@@ -145,7 +146,7 @@
+ // the body of the function inside braces.  KEY_TYPE and TAG must be types.
+ #define TF_REGISTRY_DEFINE_WITH_TYPE(KEY_TYPE, TAG)                            \
+     static void _Tf_RegistryFunction(KEY_TYPE*, TAG*);                         \
+-    ARCH_CONSTRUCTOR(TF_PP_CAT(_Tf_RegistryAdd, __COUNTER__),                  \
++    ARCH_CONSTRUCTOR(TF_PP_CAT(_Tf_RegistryAdd, __LINE__),                  \
+                      TF_REGISTRY_PRIORITY)                                     \
+     {                                                                          \
+         Tf_RegistryInit::Add(TF_PP_STRINGIZE(MFB_ALT_PACKAGE_NAME),            \
+@@ -167,7 +168,7 @@
+                              TF_PP_CAT(_Tf_RegistryFunction, NAME),            \
+                              TF_PP_STRINGIZE(KEY_TYPE));                       \
+     }                                                                          \
+-    _ARCH_ENSURE_PER_LIB_INIT(Tf_RegistryStaticInit, _tfRegistryInit);         \
++    _ARCH_ENSURE_PER_LIB_INIT(Tf_RegistryStaticInit, TF_PP_CAT(_tfRegistryInit, NAME));         \
+     static void TF_PP_CAT(_Tf_RegistryFunction, NAME)(KEY_TYPE*, void*)
+ 
+ 
+@@ -199,7 +200,7 @@
+ ///
+ /// \hideinitializer
+ #define TF_REGISTRY_FUNCTION(KEY_TYPE) \
+-    TF_REGISTRY_DEFINE(KEY_TYPE, __COUNTER__)
++    TF_REGISTRY_DEFINE(KEY_TYPE, __LINE__)
+ 
+ /// Define a function that is called on demand by \c TfRegistryManager.
+ ///
+@@ -240,7 +241,7 @@
+ ///
+ /// \hideinitializer
+ #define TF_REGISTRY_FUNCTION_WITH_TAG(KEY_TYPE, TAG) \
+-    TF_REGISTRY_DEFINE(KEY_TYPE, TF_PP_CAT(TAG, __COUNTER__))
++    TF_REGISTRY_DEFINE(KEY_TYPE, TF_PP_CAT(TAG, __LINE__))
+ 
+ PXR_NAMESPACE_CLOSE_SCOPE
+ 
+--- a/pxr/base/work/singularTask.h
++++ b/pxr/base/work/singularTask.h
+@@ -1,3 +1,4 @@
++// Modified for libopenusd by Tyler Morgan-Wall, 2026: R embedding; see tools/vendor/README.md.
+ //
+ // Copyright 2016 Pixar
+ //
+@@ -14,6 +15,7 @@
+ #include <atomic>
+ #include <functional>
+ #include <type_traits>
++#include <utility>
+ 
+ PXR_NAMESPACE_OPEN_SCOPE
+ 
+@@ -59,9 +61,18 @@
+ 
+ #else // doxygen
+ 
+-    template <class Callable, class... Args>
+-    WorkSingularTask(WorkDispatcher &d, Callable &&c, Args&&... args)
++    // A nullary callable needs no binder. Store a decayed copy, just as
++    // std::bind does, without instantiating its deprecated result_of machinery.
++    template <class Callable>
++    WorkSingularTask(WorkDispatcher &d, Callable &&c)
++        : _waker(_MakeWaker(d, std::decay_t<Callable>(
++                                  std::forward<Callable>(c))))
++        , _count(0) {}
++
++    template <class Callable, class A0, class... Args>
++    WorkSingularTask(WorkDispatcher &d, Callable &&c, A0&& a0, Args&&... args)
+         : _waker(_MakeWaker(d, std::bind(std::forward<Callable>(c),
++                                         std::forward<A0>(a0),
+                                          std::forward<Args>(args)...)))
+         , _count(0) {}
+ 

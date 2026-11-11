@@ -117,4 +117,22 @@ expect_error(
   .Call("libopenusd_version_R", PACKAGE = "libopenusd"),
   "not available|not in load table"
 )
+# At least 16 values enter OpenUSD's compressed scalar-array path.
+values = rep(c(2147483648, 2147483520, -2147483648, 0), 8L)
+source = paste0(
+  '#usda 1.0\ndef Scope "Bounds" {\n float[] values = [',
+  paste(format(values, scientific = FALSE, trim = TRUE), collapse = ", "),
+  ']\n}\n'
+)
+stage = usd_from_usda(source)
+expected = usd_to_usda(stage)
+path = tempfile(fileext = ".usdc")
+usd_export(stage, path)
+restored = usd_open(path)
+actual = usd_to_usda(restored)
+usd_close(restored)
+usd_close(stage)
+unlink(path)
+stopifnot(identical(actual, expected))
+
 unlink(workspace, recursive = TRUE)

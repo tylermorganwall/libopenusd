@@ -41,3 +41,8 @@
   reclaims unused layer identities, and corrects uninitialized scalar removal.
   Updates deprecated APIs and resolves compiler portability warnings.
 - Overall: Includes the required type-traits header for tracing with newer libc++.
+- Overall: Fixes strict Clang warnings in native token macros, registration, and
+  destructor definitions while preserving C++17 support. Avoids a deprecated
+  standard-library binding path when scheduling tasks without arguments.
+- Overall: Prevents out-of-range integer conversions when compressing floating-point
+  arrays near the 32-bit integer limits.
