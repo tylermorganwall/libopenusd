@@ -933,7 +933,15 @@
  #include <utility>
  #include <vector>
  
-@@ -723,8 +726,9 @@
+@@ -32,6 +35,7 @@
+ #if defined(ARCH_OS_WINDOWS)
+ #include <functional>
+ #include <io.h>
++#include <share.h>
+ #include <process.h>
+ #include <sys/utime.h>
+ #include <Windows.h>
+@@ -723,8 +727,9 @@
      std::function<bool(const char* name)> func,
      int maxRetry = 1000)
  {
@@ -945,7 +953,7 @@
  
      std::string attempt;
  
-@@ -741,7 +745,7 @@
+@@ -741,7 +746,7 @@
      attempt = sTemplate;
      for (int retry = 0; retry != maxRetry; ++retry) {
          for (char *p = attempt.data() + xsPos; *p; ++p) {
@@ -954,7 +962,7 @@
          }
          // Invoke callback and if successful return the path.  Otherwise repeat
          // with a different random name for up to maxRetry times.
-@@ -1024,7 +1028,7 @@
+@@ -1024,7 +1029,7 @@
      int rval = posix_madvise(reinterpret_cast<void *>(alignedAddrInt),
                               len + (addrInt - alignedAddrInt), adviceMap[adv]);
      if (rval != 0) {
@@ -963,7 +971,17 @@
                  "ret=%d, errno=%d '%s'\n",
                  alignedAddrInt, len + (addrInt-alignedAddrInt),
                  rval, errno, ArchStrerror().c_str());
-@@ -1502,7 +1506,7 @@
+@@ -1341,7 +1346,9 @@
+         } GenericReparseBuffer;
+     };
+ } REPARSE_DATA_BUFFER, *PREPARSE_DATA_BUFFER;
++#ifndef SYMLINK_FLAG_RELATIVE
+ #define SYMLINK_FLAG_RELATIVE 0x00000001
++#endif
+ 
+ std::string ArchReadLink(const char* path)
+ {
+@@ -1502,7 +1509,7 @@
      int rval = posix_fadvise(fileno(file), offset, static_cast<off_t>(count),
                               adviceMap[adv]);
      if (rval != 0) {
@@ -1195,16 +1213,96 @@
  //
  // Copyright 2016 Pixar
  //
-@@ -420,7 +422,7 @@
+@@ -321,14 +323,6 @@
+     return *_GetOrCreate(_progInfoSingleton);
+ }
+ 
+-// AS-safe accessor.  Returns nullptr if the singleton has not yet been
+-// constructed.
+-static Arch_ProgInfo*
+-ArchStackTrace_TryGetProgInfo()
+-{
+-    return _progInfoSingleton.load(std::memory_order_acquire);
+-}
+-
+ namespace {
+ 
+ // Key-value map for extra log info.  Stores unowned pointers to text to be
+@@ -344,11 +338,6 @@
+     // truncation message.  NOT async-signal-safe.
+     void EmitAnyExtraLogInfo(FILE *outFile, size_t maxLines = 0) const;
+ 
+-    // Attempt to write the extra log info to fd via aswrite().  If maxLines >
+-    // 0, writes at most that many value lines (header lines do not count) plus
+-    // a truncation marker.  Async-signal-safe for crash-handler paths.
+-    void ASEmitAnyExtraLogInfo(int fd, size_t maxLines = 0) const;
+-
+     // Attempt to write the extra log info to buf, up to one less than bufSize,
+     // always null-terminates.  If maxLines > 0, writes at most that many value
+     // lines (header lines do not count) and appends a truncation marker.
+@@ -420,24 +409,7 @@
      std::lock_guard<_AtomicFlagMutex>
          lock(_logInfoForErrorsMutex, std::adopt_lock);
      _ForEachLine([outFile](const char *s) {
 -        fputs(s, outFile);
+-        return true;
+-    }, maxLines);
+-}
+-
+-void
+-Arch_LogInfo::ASEmitAnyExtraLogInfo(int fd, size_t maxLines) const
+-{
+-    // Uses aswrite (write(2)) and is async-signal-safe.  Each chunk emitted by
+-    // _ForEachLine results in one aswrite call -- several small writes rather
+-    // than one buffered write, which is fine on the crash path.
+-    if (!_logInfoForErrorsMutex.try_lock()) {
+-        return;
+-    }
+-    std::lock_guard<_AtomicFlagMutex>
+-        lock(_logInfoForErrorsMutex, std::adopt_lock);
+-    _ForEachLine([fd](const char *s) {
+-        aswrite(fd, s);
 +        LibOpenUsdFputs(s, outFile);
          return true;
      }, maxLines);
  }
-@@ -655,6 +657,10 @@
+@@ -474,19 +446,6 @@
+     return *_GetOrCreate(_logInfoSingleton);
+ }
+ 
+-// AS-safe accessor.  Returns nullptr if the singleton has not yet been
+-// constructed by a non-signal caller.
+-static Arch_LogInfo*
+-ArchStackTrace_TryGetLogInfo()
+-{
+-    return _logInfoSingleton.load(std::memory_order_acquire);
+-}
+-
+-// Serializes entry to _ArchLogProcessStateHelper across threads and disallows
+-// recursive entry from a nested crash.  Namespace-scope (and constant-init)
+-// so a first-call from a signal handler does not race with construction.
+-static _AtomicFlagMutex _archLogProcessStateBusy;
+-
+ static char const *
+ _GetExtraLogInfoReportDebugUnsafeImpl()
+ {
+@@ -536,6 +495,7 @@
+ //
+ // ARCH_NOINLINE because old clang versions generated incorrect optimized
+ // code.
++#if defined(ARCH_OS_DARWIN)
+ char* asstrcpy(char* dst, const char* src) ARCH_NOINLINE;
+ char* asstrcpy(char* dst, const char* src)
+ {
+@@ -544,6 +504,7 @@
+     }
+     return dst - 1;
+ }
++#endif
+ 
+ // Compare the strings for equality.
+ bool asstreq(const char* dst, const char* src)
+@@ -655,6 +616,10 @@
      size_t len = asstrlen(msg);
      size_t written = 0;
      while (written < len) {
@@ -1215,7 +1313,186 @@
          ptrdiff_t n = write(fd, msg + written, len - written);
          if (n < 0) {
              // retry if the write is interrupted by a signal.
-@@ -1227,11 +1233,11 @@
+@@ -666,53 +631,9 @@
+         written += n;
+     }
+     errno = saved;
+-}
+-
+-// Write a long converted to decimal ASCII to a file descriptor.
+-void aswriteLong(int fd, long x)
+-{
+-    char buf[numericBufferSize];
+-    asitoa(buf, x);
+-    aswrite(fd, buf);
+ }
+ 
+-// Write nDashes '-' characters to fd.  Async-signal-safe.
+-void aswriteDashes(int fd, int nDashes)
+-{
+-    static const char dash64[] =
+-        "----------------------------------------------------------------";
+-    if (nDashes <= 0) {
+-        return;
+-    }
+-    int dividend = nDashes / 64;
+-    int remainder = nDashes % 64;
+-    while (dividend--) {
+-        aswrite(fd, dash64);
+-    }
+-    aswrite(fd, dash64 + 64 - remainder);
+-}
+-
+-// Write a centered "---- progname suffix ----" banner to fd, padding to at
+-// least 80 columns.  Returns the total banner width (useful when emitting a
+-// matching closing banner).  Async-signal-safe.
+-int aswriteBanner(int fd, const char *progname, const char *suffix)
+-{
+-    const int labelSize = (int)(asstrlen(progname) + asstrlen(suffix));
+-    // 6 == 2 * strlen("-- "): minimum dashes-and-space padding on each side.
+-    const int bannerSize = std::max<int>(80, labelSize + 6);
+-    const int numLeading = (bannerSize - labelSize) / 2 - 1;
+-
+-    aswrite(fd, "\n");
+-    aswriteDashes(fd, numLeading);
+-    aswrite(fd, " ");
+-    aswrite(fd, progname);
+-    aswrite(fd, suffix);
+-    aswrite(fd, " ");
+-    aswriteDashes(fd, bannerSize - numLeading - labelSize - 2);
+-    aswrite(fd, "\n");
+-    return bannerSize;
+-}
+-
++#if defined(ARCH_OS_DARWIN)
+ int _GetStackTraceName(char* buf, size_t len)
+ {
+     // Take care to avoid non-async-safe functions.
+@@ -780,6 +701,7 @@
+     }
+     return fd;
+ }
++#endif
+ 
+ // Build an argument list (async-safe).
+ static bool
+@@ -834,99 +756,13 @@
+  * can be tested with ArchTestCrash(), which should crash with this
+  * malloc corruption.
+  */
+-static int
+-nonLockingFork()
+-{
+-    if (Arch_nonLockingFork != NULL) {
+-        return (Arch_nonLockingFork)();
+-    }
+-    return fork();
+-}
+-#endif
+-
+-#if defined(ARCH_OS_LINUX)
+-static int
+-nonLockingLinux__execve (const char *file,
+-                         char *const argv[],
+-                         char *const envp[])
+-{
+-    /*
+-     * We make a direct system call here, because we can't find an
+-     * execve which corresponds with the non-locking fork we call
+-     * (_Fork().)
+-     *
+-     * This code doesn't mess with other threads, and avoids the bug
+-     * that calling regular execv after the nonLockingFork() causes
+-     * hangs in a threaded app.  (We use the non-locking fork to get
+-     * around problems with forking when we have had memory
+-     * corruption.)  whew.
+-     */
+-
+-    unsigned long result;
+-
+-#if defined (ARCH_CPU_ARM)
+-    {
+-        long __file_result asm ("x0") = (long)file;
+-        char* const* __argv asm ("x1") = argv;
+-        char* const* __envp asm ("x2") = envp;
+-        long __num_execve asm ("x8") = 221;
+-        __asm__ __volatile__ (
+-            "svc 0"
+-            : "=r" (__file_result)
+-            : "r"(__num_execve), "r" (__file_result), "r" (__argv), "r" (__envp)
+-            : "memory"
+-        );
+-        result = __file_result;
+-    }
+-#elif defined(ARCH_CPU_INTEL) && defined(ARCH_BITS_64)
+-
+-    /*
+-     * %rdi, %rsi, %rdx, %rcx, %r8, %r9 are args 0-5
+-     * syscall clobbers %rcx and %r11
+-     *
+-     * why do we put args 1, 2 into cx, dx and then move them?
+-     * because it doesn't work if you directly specify them as
+-     * constraints to gcc.
+-     */
+-
+-    __asm__ __volatile__ (
+-        "mov    %0, %%rdi    \n\t"
+-        "mov    %%rcx, %%rsi \n\t"
+-        "mov    %%rdx, %%rdx \n\t"
+-        "mov    $0x3b, %%rax \n\t"
+-        "syscall             \n\t"
+-        : "=a" (result)
+-        : "0" (file), "c" (argv), "d" (envp)
+-        : "memory", "cc", "r11"
+-    );
+-#else
+-#error Unknown architecture
+ #endif
+ 
+-    if (result >= 0xfffffffffffff000) {
+-        errno = -result;
+-        result = (unsigned int)-1;
+-    }
+-
+-    return result;
+-}
+-
+-#endif
+-
+ #if !defined(ARCH_OS_WINDOWS)
+ /* This is the corresponding execv which works with nonLockingFork().
+  * currently, it's only different from execv for linux.  The crash
+  * recovery behavior can be tested with ArchTestCrash().
+  */
+-static int
+-nonLockingExecv(const char *path, char *const argv[])
+-{
+-#if defined(ARCH_OS_LINUX)
+-     return nonLockingLinux__execve (path, argv, __environ);
+-#else
+-     return execv(path, argv);
+-#endif
+-}
+ #endif
+ 
+ /*
+@@ -967,6 +803,7 @@
+  * only async-safe functions.
+  */
+ 
++#if defined(ARCH_OS_DARWIN)
+ static
+ int _LogStackTraceForPid(bool isFatal,
+                          const char *logfile, 
+@@ -1010,6 +847,7 @@
+                             300 /* wait up to 300 seconds */ , NULL, NULL);
+     return 1;
+ }
++#endif
+ 
+ void
+ ArchSetProcessStateLogCommand(const char* command,
+@@ -1227,11 +1065,11 @@
          // Not async-signal-safe; only reached when crashingHard is false.
          if (FILE* stackFd = ArchOpenFile(stackTrace, "a")) {
              if (FILE* sessionLogFd = ArchOpenFile(sessionLog, "r")) {
@@ -1229,7 +1506,20 @@
                  }
                  fclose(sessionLogFd);
              }
-@@ -1294,104 +1300,8 @@
+@@ -1273,12 +1111,6 @@
+     return _isCrashing;
+ }
+ 
+-static void
+-_SetAppIsCrashing(bool crashing)
+-{
+-    _isCrashing = crashing;
+-}
+-
+ /*
+  * Run an external program to make a report and tell the user where the report
+  * file is.
+@@ -1294,104 +1126,8 @@
                             const char* message = nullptr,
                             const char* extraLogMsg = nullptr)
  {
@@ -1336,7 +1626,7 @@
  }
  
  void
-@@ -1438,7 +1348,7 @@
+@@ -1438,7 +1174,7 @@
                                                ArchGetProgramNameForErrors()),
                               &tmpFile);
  
@@ -1345,7 +1635,7 @@
              "--------------------------------------------------------------\n"
              "A stack trace has been requested by %s because of %s\n",
              progname.c_str(), reason.c_str());
-@@ -1450,7 +1360,7 @@
+@@ -1450,7 +1186,7 @@
  
      if (fd != -1) {
          FILE* fout = ArchFdOpen(fd, "w");
@@ -1354,7 +1644,7 @@
                  "--------------------------------------------------------------"
                  "\n", _hostname, tmpFile.c_str());
          ArchPrintStackTrace(fout, progname, reason);
-@@ -1468,13 +1378,13 @@
+@@ -1468,13 +1204,13 @@
      }
      else {
          /* we couldn't open the tmp file, so write the stack trace to stderr */
@@ -1364,16 +1654,15 @@
                  "\n");
 -        ArchPrintStackTrace(stderr, progname, reason);
 -        ArchStackTrace_GetLogInfo().EmitAnyExtraLogInfo(stderr);
--    }
--    fprintf(stderr,
 +        ArchPrintStackTrace(nullptr, progname, reason);
 +        ArchStackTrace_GetLogInfo().EmitAnyExtraLogInfo(nullptr);
-+    }
+     }
+-    fprintf(stderr,
 +    LibOpenUsdFprintf(nullptr,
              "--------------------------------------------------------------\n");
  }
  
-@@ -1523,12 +1433,8 @@
+@@ -1523,12 +1259,8 @@
  
      ArchPrintStackTrace(oss, programName, reason);
  
@@ -1388,7 +1677,28 @@
  }
  
  void
-@@ -1815,143 +1721,8 @@
+@@ -1740,7 +1472,6 @@
+     return Arch_GetStackTrace(frames);
+ }
+ 
+-
+ static
+ ArchStackTraceCallback*
+ Arch_GetStackTraceCallback()
+@@ -1792,12 +1523,6 @@
+     }
+ }
+ 
+-static void
+-archAlarmHandler(int /*sig */)
+-{
+-    /* do nothing.  we just have to wake up. */
+-}
+-
+ /*
+  * Replacement for 'system' safe for a crash handler
+  *
+@@ -1815,143 +1540,8 @@
                          int timeout, ArchCrashHandlerSystemCB callback,
                          void* userData)
  {
@@ -1541,6 +1851,141 @@
  //
  // Copyright 2024 Pixar
  //
+@@ -73,7 +75,7 @@
+          1.0,
+          0.0},
+         0, 0,
+-        { 0,0,0, 0,0,0, 0,0,0 }
++        {{ 0,0,0, 0,0,0, 0,0,0 }}
+     },
+     {
+         // extractPrimaries(cmx %*% AP0Mx)
+@@ -85,7 +87,7 @@
+          1.0,
+          0.0},
+         0, 0,
+-        { 0,0,0, 0,0,0, 0,0,0 }
++        {{ 0,0,0, 0,0,0, 0,0,0 }}
+     },
+     {
+         {"Linear Rec.709 (sRGB)", "lin_rec709_scene",
+@@ -96,7 +98,7 @@
+          1.0,
+          0.0},
+         0, 0,
+-        { 0,0,0, 0,0,0, 0,0,0 }
++        {{ 0,0,0, 0,0,0, 0,0,0 }}
+     },
+     {
+         {"Linear P3-D65", "lin_p3d65_scene",
+@@ -107,7 +109,7 @@
+          1.0,
+          0.0},
+         0, 0,
+-        { 0,0,0, 0,0,0, 0,0,0 }
++        {{ 0,0,0, 0,0,0, 0,0,0 }}
+     },
+     {
+         {"Linear Rec.2020", "lin_rec2020_scene",
+@@ -118,7 +120,7 @@
+          1.0,
+          0.0},
+         0, 0,
+-        { 0,0,0, 0,0,0, 0,0,0 }
++        {{ 0,0,0, 0,0,0, 0,0,0 }}
+     },
+     {
+         {"Linear AdobeRGB", "lin_adobergb_scene",
+@@ -129,7 +131,7 @@
+          1.0,
+          0.0},
+         0, 0,
+-        { 0,0,0, 0,0,0, 0,0,0 }
++        {{ 0,0,0, 0,0,0, 0,0,0 }}
+     },
+     {
+         {"CIE XYZ-D65 - Scene-referred", "lin_ciexyzd65_scene",
+@@ -140,7 +142,7 @@
+          1.0,
+          0.0},
+         0, 0,
+-        { 0,0,0, 0,0,0, 0,0,0 }
++        {{ 0,0,0, 0,0,0, 0,0,0 }}
+     },
+     {
+         {"sRGB Encoded Rec.709 (sRGB)", "srgb_rec709_scene",
+@@ -151,7 +153,7 @@
+          2.4,
+          0.055},
+         0, 0,
+-        { 0,0,0, 0,0,0, 0,0,0 }
++        {{ 0,0,0, 0,0,0, 0,0,0 }}
+     },
+     {
+         {"Gamma 2.4 Encoded Rec.709", "g24_rec709_scene",
+@@ -162,7 +164,7 @@
+          2.4,
+          0.0},
+         0, 0,
+-        { 0,0,0, 0,0,0, 0,0,0 }
++        {{ 0,0,0, 0,0,0, 0,0,0 }}
+     },
+     {
+         {"Gamma 2.2 Encoded Rec.709", "g22_rec709_scene",
+@@ -173,7 +175,7 @@
+          2.2,
+          0.0},
+         0, 0,
+-        { 0,0,0, 0,0,0, 0,0,0 }
++        {{ 0,0,0, 0,0,0, 0,0,0 }}
+     },
+     {
+         {"Gamma 1.8 Encoded Rec.709", "g18_rec709_scene",
+@@ -184,7 +186,7 @@
+          1.8,
+          0.0},
+         0, 0,
+-        { 0,0,0, 0,0,0, 0,0,0 }
++        {{ 0,0,0, 0,0,0, 0,0,0 }}
+     },
+     {
+         {"sRGB Encoded AP1", "srgb_ap1_scene",
+@@ -195,7 +197,7 @@
+          2.4,
+          0.055},
+         0, 0,
+-        { 0,0,0, 0,0,0, 0,0,0 }
++        {{ 0,0,0, 0,0,0, 0,0,0 }}
+     },
+     {
+         {"Gamma 2.2 Encoded AP1", "g22_ap1_scene",
+@@ -206,7 +208,7 @@
+          2.2,
+          0.0},
+         0, 0,
+-        { 0,0,0, 0,0,0, 0,0,0 }
++        {{ 0,0,0, 0,0,0, 0,0,0 }}
+     },
+     {
+         {"sRGB Encoded P3-D65", "srgb_p3d65_scene",
+@@ -217,7 +219,7 @@
+          2.4,
+          0.055},
+         0, 0,
+-        { 0,0,0, 0,0,0, 0,0,0 }
++        {{ 0,0,0, 0,0,0, 0,0,0 }}
+     },
+     {
+         {"Gamma 2.2 Encoded AdobeRGB", "g22_adobergb_scene",
+@@ -228,7 +230,7 @@
+          2.2,
+          0.0},
+         0, 0,
+-        { 0,0,0, 0,0,0, 0,0,0 }
++        {{ 0,0,0, 0,0,0, 0,0,0 }}
+     },
+     {
+         {"Data", "data",
 @@ -514,11 +516,11 @@
  void printMatrix(const NcM33f* m) {
      if (!m) return;
@@ -2294,6 +2739,24 @@
  }
  
  TfDiagnosticMgr::ErrorIterator
+@@ -798,7 +767,7 @@
+         lines->push_back(_FormatDiagnostic(*i, i->_info));
+     }
+     std::string key = _ThreadState::_MakeLabel(
+-        TfStringPrintf("Transient Errors %p", lines.get()).c_str());
++        TfStringPrintf("Transient Errors %p", static_cast<const void*>(lines.get())).c_str());
+     return _LogTextPin(std::move(key), std::move(lines));
+ }
+ 
+@@ -813,7 +782,7 @@
+         lines->push_back(_FormatDiagnostic(d, d._info));
+     }));
+     std::string key = _ThreadState::_MakeLabel(
+-        TfStringPrintf("Transient Diagnostics %p", lines.get()).c_str());
++        TfStringPrintf("Transient Diagnostics %p", static_cast<const void*>(lines.get())).c_str());
+     return _LogTextPin(std::move(key), std::move(lines));
+ }
+ 
 @@ -861,7 +830,7 @@
  _PrintDiagnostic(FILE *fout, const TfEnum &code, const TfCallContext &context,
      const std::string& msg, const TfDiagnosticInfo &info)
@@ -2351,8 +2814,9 @@
  
      TF_FOR_ALL(i, localStacks) {
 -        printf("== TfErrorMark @ %p created from ===========================\n",
+-               i->first);
 +        LibOpenUsdPrintf("== TfErrorMark @ %p created from ===========================\n",
-                i->first);
++               static_cast<const void*>(i->first));
          std::stringstream ss;
          ArchPrintStackFrames(ss, i->second);
 -        printf("%s\n", ss.str().c_str());
@@ -6877,7 +7341,35 @@
  }
  
  std::string PcpPrimIndex::DumpToString(
-@@ -1464,13 +1466,13 @@
+@@ -901,27 +903,6 @@
+         std::swap(lhs.vsetPath, rhs.vsetPath);
+     }
+ 
+-    // Stream insertion operator for debugging.
+-    friend std::ostream &operator<<(std::ostream &os, Task const &task) {
+-        unsigned char buf[sizeof(PcpNodeRef)] = { 0 };
+-        memcpy(buf, &task.node, sizeof(task.node));
+-        std::string bytes;
+-        for (char b: buf) {
+-            bytes += TfStringPrintf("%x", int(b));
+-        }
+-        os << TfStringPrintf(
+-            "Task(type=%s, node=%s, nodePath=<%s>, nodeSite=<%s>",
+-            TfEnum::GetName(task.type).c_str(),
+-            bytes.c_str(),
+-            task.node.GetPath().GetText(),
+-            TfStringify(task.node.GetSite()).c_str());
+-        if (!task.vsetName.empty()) {
+-            os << TfStringPrintf(
+-                ", vsetPath=%s, vsetName=%s, vsetNum=%d",
+-                task.vsetPath.GetText(), task.vsetName.c_str(), task.vsetNum);
+-        }
+-        return os << ")";
+-    }        
+     
+     Type type;
+     int vsetNum; // << only for variant tasks.
+@@ -1464,13 +1445,13 @@
  
      inline void _DebugPrintTasks(char const *label) const {
  #if 0
@@ -6887,14 +7379,26 @@
          sort_heap(tq.begin(), tq.end(), Task::PriorityOrder());
          for (auto iter = tq.rbegin(); iter != tq.rend(); ++iter) {
 -            printf("%s\n", TfStringify(*iter).c_str());
--        }
--        printf("----------------\n");
 +            LibOpenUsdPrintf("%s\n", TfStringify(*iter).c_str());
-+        }
+         }
+-        printf("----------------\n");
 +        LibOpenUsdPrintf("----------------\n");
  #endif
      }
  
+@@ -5048,10 +5029,11 @@
+         inputs.cache->GetPrimIndexInputs().IsEquivalentTo(inputs)) {
+         // Get prim index through our cache.  This ensures the lifetime
+         // of layer stacks brought in by ancestors.
++        const SdfPath parentPath = site.path.GetParentPath();
+         const PcpPrimIndex& parentIndex =
+             inputs.parentIndex ? *inputs.parentIndex :
+             Pcp_ComputePrimIndexWithCompatibleInputs(
+-                *inputs.cache, site.path.GetParentPath(), inputs,
++                *inputs.cache, parentPath, inputs,
+                 &outputs->allErrors);
+ 
+         // Clone the parent's graph..
 --- a/pxr/usd/pcp/statistics.cpp
 +++ b/pxr/usd/pcp/statistics.cpp
 @@ -1,3 +1,5 @@
@@ -6903,6 +7407,15 @@
  //
  // Copyright 2016 Pixar
  //
+@@ -166,7 +168,7 @@
+             if (d == 0) {
+                 return "N/A";
+             }
+-            return TfStringPrintf("%'.3f", (double)n / (double)d);
++            return TfStringPrintf("%.3f", (double)n / (double)d);
+         }
+ 
+         static std::string FormatSize(size_t n)
 @@ -287,13 +289,13 @@
          out << "PcpMapFunction size histogram: " << endl;
          out << "SIZE    COUNT" << endl;
@@ -6944,6 +7457,15 @@
 +                             "Failed reading %zu bytes at offset %" PRId64,
                               nBytes, _cur));
              }
+         }
+@@ -1221,7 +1223,7 @@
+     template <class T>
+     inline T Read() {
+         if constexpr (_IsBitwiseReadWrite<T>::value) {
+-            T bits;
++            T bits{};
+             src.Read(&bits, sizeof(bits));
+             return bits;
          }
 @@ -2626,7 +2628,7 @@
  
@@ -7023,7 +7545,44 @@
  //
  // Copyright 2016 Pixar
  //
-@@ -943,11 +945,11 @@
+@@ -128,25 +130,7 @@
+ {
+     return x.parent == y.parent;
+ }
+-inline bool operator==(_ParentAndRef<void> const &x,
+-                       _ParentAndRef<void> const &y)
+-{
+-    return x.parent == y.parent;
+-}
+-inline bool operator==(_ParentAndRef<void> const &x, _ParentAnd<void> const &y)
+-{
+-    return x.parent == y.parent;
+-}
+-inline bool operator==(_ParentAnd<void> const &x, _ParentAndRef<void> const &y)
+-{
+-    return x.parent == y.parent;
+-}
+ 
+-inline size_t
+-hash_value(const Sdf_PathNode *p)
+-{
+-    return TfHash()(p);
+-}
+ 
+ template <class PaT>
+ inline size_t _OuterHash(PaT const &pat)
+@@ -154,10 +138,6 @@
+     return TfHash::Combine(pat.parent, pat.value);
+ }
+ 
+-inline size_t _OuterHash(_ParentAnd<void> const &pat)
+-{
+-    return TfHash::Combine(pat.parent);
+-};
+ 
+ inline size_t _OuterHash(_ParentAndRef<void> const &pat)
+ {
+@@ -943,11 +923,11 @@
      _Visit( Sdf_PathNode::GetAbsoluteRootNode(), &stats );
      _Visit( Sdf_PathNode::GetRelativeRootNode(), &stats );
  
@@ -7040,7 +7599,7 @@
  
      // XXX: Use TfEnum.
      char const *enumNameMap[Sdf_PathNode::NumNodeTypes];
-@@ -963,29 +965,29 @@
+@@ -963,29 +943,29 @@
      enumNameMap[Sdf_PathNode::MapperArgNode] = "MapperArgNode";
      enumNameMap[Sdf_PathNode::ExpressionNode] = "ExpressionNode";
  
@@ -7080,7 +7639,7 @@
                 i, stats.numChildrenTable[i] );
      }
  
-@@ -993,10 +995,10 @@
+@@ -993,10 +973,10 @@
      for (size_t i=1; i < stats.numChildrenTable.size(); ++i) {
          numChildren += i*stats.numChildrenTable[i];
      }
@@ -8081,3 +8640,1310 @@
 -#endif // _GNU_SOURCE
 +    strerror_r(errorCode, msg_buf, sizeof(msg_buf));
 +#endif
+--- a/pxr/usd/sdf/fileFormat.cpp
++++ b/pxr/usd/sdf/fileFormat.cpp
+@@ -1,3 +1,4 @@
++// Modified for libopenusd by Tyler Morgan-Wall, 2026: R embedding; see tools/vendor/README.md.
+ //
+ // Copyright 2016 Pixar
+ //
+@@ -561,11 +562,13 @@
+         // to have the qualities the file format dictates, even if the
+         // underlying data object type is the same.
+         const SdfAbstractDataConstPtr oldData = _GetLayerData(*layer);
++        const auto *newDataPtr = get_pointer(data);
++        const auto *oldDataPtr = get_pointer(oldData);
+         const bool differentDataImpl = 
+             data->StreamsData() != oldData->StreamsData() ||
+             data->IsDetached() != oldData->IsDetached() ||
+             !TfSafeTypeCompare(
+-                typeid(*get_pointer(data)), typeid(*get_pointer(oldData)));
++                typeid(*newDataPtr), typeid(*oldDataPtr));
+ 
+         if (differentDataImpl) {
+             layer->_AdoptData(data);
+--- a/pxr/usd/sdf/textFileFormatParser.cpp
++++ b/pxr/usd/sdf/textFileFormatParser.cpp
+@@ -1,3 +1,4 @@
++// Modified for libopenusd by Tyler Morgan-Wall, 2026: R embedding; see tools/vendor/README.md.
+ //
+ // Copyright 2024 Pixar
+ //
+@@ -439,7 +440,7 @@
+                                  context.values.valueTypeName.c_str()));
+         }
+ 
+-        const std::string &scalarTypeName =
++        const std::string scalarTypeName =
+             arrayType.GetScalarType().GetAsToken();
+         
+         auto editFactory =
+@@ -968,7 +969,7 @@
+         else if (parsingContext ==
+             Sdf_TextParserCurrentParsingContext::DisplayUnitMetadata)
+         {
+-            const TfEnum &unit = SdfGetUnitFromName(in.string());
++            const TfEnum unit = SdfGetUnitFromName(in.string());
+             if (unit == TfEnum()) {
+                 std::string errorMessage = "'" +
+                     in.string() + "' is not a valid display unit";
+--- a/pxr/usd/sdf/identity.cpp
++++ b/pxr/usd/sdf/identity.cpp
+@@ -1,3 +1,4 @@
++// Modified for libopenusd by Tyler Morgan-Wall, 2026: R embedding; see tools/vendor/README.md.
+ //
+ // Copyright 2016 Pixar
+ //
+@@ -94,7 +95,7 @@
+         
+         // Make sure an identity actually exists at the old path, otherwise
+         // there's nothing to do.
+-        if (_ids.count(oldPath) == 0) {
++        if (oldPath == newPath || _ids.count(oldPath) == 0) {
+             return;
+         }
+ 
+@@ -104,6 +105,9 @@
+             _ids.insert(std::make_pair(newPath, (Sdf_Identity*)nullptr));
+         if (!newIdStatus.second) {
+             if (TF_VERIFY(newIdStatus.first->second)) {
++                if (newIdStatus.first->second->_refCount == 0) {
++                    --_deadCount;
++                }
+                 newIdStatus.first->second->_Forget();
+             }
+         }
+@@ -166,6 +170,13 @@
+ 
+ void Sdf_Identity::_Forget()
+ {
++    // The registry retains zero-reference identities until a cleanup pass.
++    // Once it forgets one (on destruction or replacement), no future release
++    // can delete it. Reclaim it now; live handles retain their detached identity.
++    if (_refCount == 0) {
++        delete this;
++        return;
++    }
+     _path = SdfPath();
+     _regImpl = nullptr;
+ }
+--- a/pxr/usd/sdf/specType.cpp
++++ b/pxr/usd/sdf/specType.cpp
+@@ -1,3 +1,4 @@
++// Modified for libopenusd by Tyler Morgan-Wall, 2026: R embedding; see tools/vendor/README.md.
+ //
+ // Copyright 2016 Pixar
+ //
+@@ -176,7 +177,8 @@
+ {
+     const Sdf_SpecTypeInfo& specTypeInfo = Sdf_SpecTypeInfo::GetInstance();
+ 
+-    const TfType& schemaType = TfType::Find(typeid(from.GetSchema()));
++    const auto &schema = from.GetSchema();
++    const TfType& schemaType = TfType::Find(typeid(schema));
+     if (!TF_VERIFY(!schemaType.IsUnknown())) {
+         return TfType();
+     }
+@@ -226,7 +228,8 @@
+     const SdfSpecType fromType = from.GetSpecType();
+     const TfType& toType = TfType::Find(to);
+ 
+-    const TfType& fromSchemaType = TfType::Find(typeid(from.GetSchema()));
++    const auto &schema = from.GetSchema();
++    const TfType& fromSchemaType = TfType::Find(typeid(schema));
+ 
+     TfBigRWMutex::ScopedLock lock(specTypeInfo.mutex, /*write=*/false);
+ 
+--- a/pxr/usd/sdf/mapEditProxy.h
++++ b/pxr/usd/sdf/mapEditProxy.h
+@@ -1,3 +1,4 @@
++// Modified for libopenusd by Tyler Morgan-Wall, 2026: R embedding; see tools/vendor/README.md.
+ //
+ // Copyright 2016 Pixar
+ //
+@@ -480,7 +481,8 @@
+     size_type erase(const key_type& key)
+     {
+         if (_Validate()) {
+-            const key_type& k = ValuePolicy::CanonicalizeKey(_Owner(), key);
++            const auto owner = _Owner();
++            const key_type& k = ValuePolicy::CanonicalizeKey(owner, key);
+             if (_ValidateErase(k)) {
+                 return _editor->Erase(k) ? 1 : 0;
+             }
+@@ -909,8 +911,9 @@
+     void _Set(const Type* data, const inner_iterator& i, const U& value)
+     {
+         if (_Validate()) {
++            const auto owner = _Owner();
+             const mapped_type& x =
+-                ValuePolicy::CanonicalizeValue(_Owner(), value);
++                ValuePolicy::CanonicalizeValue(owner, value);
+             if (_ValidateSet(i->first, x)) {
+                 _editor->Set(i->first, x);
+             }
+--- a/pxr/usd/sdf/crateData.cpp
++++ b/pxr/usd/sdf/crateData.cpp
+@@ -1,3 +1,4 @@
++// Modified for libopenusd by Tyler Morgan-Wall, 2026: R embedding; see tools/vendor/README.md.
+ //
+ // Copyright 2016 Pixar
+ //
+@@ -929,7 +930,7 @@
+         }
+ 
+         enum class ErrorType { Invalid, Duplicate };
+-        ErrorType errorType;
++        ErrorType errorType = ErrorType::Invalid;
+         dupeTokenSet->clear();
+ 
+         const TfTokenVector& children = val.UncheckedGet<TfTokenVector>();
+--- a/pxr/usd/sdf/pathExpressionEval.cpp
++++ b/pxr/usd/sdf/pathExpressionEval.cpp
+@@ -1,3 +1,4 @@
++// Modified for libopenusd by Tyler Morgan-Wall, 2026: R embedding; see tools/vendor/README.md.
+ //
+ // Copyright 2023 Pixar
+ //
+@@ -429,7 +430,6 @@
+     DEBUG_MSG("_Match(<%s>)\n", path.GetAsString().c_str());
+     _AutoDebugIndent indent;
+     
+-    using ComponentIter = typename std::vector<_Component>::const_iterator;
+     using Result = SdfPredicateFunctionResult;
+     
+     // Only support prim and prim property paths.
+--- a/pxr/usd/sdr/shaderMetadataHelpers.cpp
++++ b/pxr/usd/sdr/shaderMetadataHelpers.cpp
+@@ -1,3 +1,4 @@
++// Modified for libopenusd by Tyler Morgan-Wall, 2026: R embedding; see tools/vendor/README.md.
+ //
+ // Copyright 2018 Pixar
+ //
+@@ -461,7 +462,7 @@
+         }
+ 
+         // Use the property's type to decode the value.
+-        const SdfValueTypeName& type =
++        const SdfValueTypeName type =
+             otherProperty->GetTypeAsSdfType().GetSdfType();
+         VtValue parsedValue;
+         if (type == SdfValueTypeNames->String) {
+--- a/pxr/usd/pcp/dependencies.cpp
++++ b/pxr/usd/pcp/dependencies.cpp
+@@ -1,3 +1,4 @@
++// Modified for libopenusd by Tyler Morgan-Wall, 2026: R embedding; see tools/vendor/README.md.
+ //
+ // Copyright 2016 Pixar
+ //
+@@ -61,19 +62,6 @@
+     return primIndex.GetGraph()->HasNewNodes();
+ }
+ 
+-// Determine if Pcp_Dependencies should store an entry
+-// for the arc represented by the given node.
+-//
+-// As a space optimization, Pcp_Dependencies does not store entries
+-// for arcs that are implied by nearby structure and which can
+-// be easily synthesized. Specifically, it does not store arcs
+-// introduced purely ancestrally, nor does it store arcs for root nodes
+-// (PcpDependencyTypeRoot).
+-inline static bool
+-_ShouldStoreDependency(PcpDependencyFlags depFlags)
+-{
+-    return depFlags & PcpDependencyTypeDirect;
+-}
+ 
+ // Determine if Pcp_Dependencies should store entries for the subtree
+ // of nodes rooted at the given node. If this is true, then for all
+--- a/pxr/usd/pcp/changes.cpp
++++ b/pxr/usd/pcp/changes.cpp
+@@ -1,3 +1,4 @@
++// Modified for libopenusd by Tyler Morgan-Wall, 2026: R embedding; see tools/vendor/README.md.
+ //
+ // Copyright 2016 Pixar
+ //
+@@ -758,7 +759,6 @@
+     typedef int PathChangeBitmask;
+     typedef std::map<SdfPath, PathChangeBitmask,
+                      SdfPath::FastLessThan> PathChangeMap;
+-    typedef PathChangeMap::value_type PathChangeValue;
+ 
+     // Spec changes
+     typedef int SpecChangeBitmask;
+--- a/pxr/usd/usd/stage.cpp
++++ b/pxr/usd/usd/stage.cpp
+@@ -1,3 +1,4 @@
++// Modified for libopenusd by Tyler Morgan-Wall, 2026: R embedding; see tools/vendor/README.md.
+ //
+ // Copyright 2016 Pixar
+ //
+@@ -3285,7 +3286,7 @@
+         std::string  fullContext = TfStringPrintf("(%s on stage @%s@ <%p>)", 
+                                       context.c_str(), 
+                                       GetRootLayer()->GetIdentifier().c_str(),
+-                                      this);
++                                      static_cast<const void*>(this));
+         std::vector<std::string>  allErrors;
+         allErrors.reserve(errors.size() + otherErrors.size());
+ 
+@@ -4445,7 +4446,7 @@
+         TF_CODING_ERROR("Detected usd threading violation.  Concurrent changes "
+                         "to layer(s) composed in stage %p rooted at @%s@.  "
+                         "(serial=%zu, lastSerial=%zu).",
+-                        this, GetRootLayer()->GetIdentifier().c_str(),
++                        static_cast<const void*>(this), GetRootLayer()->GetIdentifier().c_str(),
+                         serial, _lastChangeSerialNumber);
+         return;
+     }
+--- a/pxr/usd/usd/clip.cpp
++++ b/pxr/usd/usd/clip.cpp
+@@ -1,3 +1,4 @@
++// Modified for libopenusd by Tyler Morgan-Wall, 2026: R embedding; see tools/vendor/README.md.
+ //
+ // Copyright 2016 Pixar
+ //
+@@ -475,7 +476,17 @@
+     }
+ 
+     TF_AXIOM(numTimes <= bracketingTimes.size());
+-    std::sort(bracketingTimes.begin(), bracketingTimes.begin() + numTimes);
++    // At most five candidates: insertion sort keeps every access within the
++    // populated range and avoids GCC's small-array introsort bounds warnings.
++    for (size_t i = 1; i < numTimes; ++i) {
++        const ExternalTime candidate = bracketingTimes[i];
++        size_t j = i;
++        while (j > 0 && candidate < bracketingTimes[j - 1]) {
++            bracketingTimes[j] = bracketingTimes[j - 1];
++            --j;
++        }
++        bracketingTimes[j] = candidate;
++    }
+     auto uniqueIt = std::unique(
+         bracketingTimes.begin(), bracketingTimes.begin() + numTimes);
+     return _GetBracketingTimeSamples(
+--- a/pxr/usd/usd/stageCache.cpp
++++ b/pxr/usd/usd/stageCache.cpp
+@@ -1,3 +1,4 @@
++// Modified for libopenusd by Tyler Morgan-Wall, 2026: R embedding; see tools/vendor/README.md.
+ //
+ // Copyright 2016 Pixar
+ //
+@@ -771,7 +772,7 @@
+ {
+     return TfStringPrintf("stage cache %s (size=%zu)",
+                           (cache.GetDebugName().empty()
+-                           ? FMT("%p", &cache)
++                           ? FMT("%p", static_cast<const void*>(&cache))
+                            : FMT("\"%s\"", cache.GetDebugName().c_str())),
+                           cache.Size());
+ }
+--- a/pxr/usd/usd/namespaceEditor.cpp
++++ b/pxr/usd/usd/namespaceEditor.cpp
+@@ -1,3 +1,4 @@
++// Modified for libopenusd by Tyler Morgan-Wall, 2026: R embedding; see tools/vendor/README.md.
+ //
+ // Copyright 2023 Pixar
+ //
+@@ -199,7 +200,7 @@
+     using ExpressionReference = PathExpr::ExpressionReference;
+ 
+     // Ignore logical operators.
+-    auto logic = [&xf](Op op, int argIndex) {};
++    auto logic = [](Op op, int argIndex) {};
+ 
+     // Collect the expression reference path.
+     auto mapRef =
+--- a/pxr/usd/usdGeom/basisCurves.cpp
++++ b/pxr/usd/usdGeom/basisCurves.cpp
+@@ -1,3 +1,4 @@
++// Modified for libopenusd by Tyler Morgan-Wall, 2026: R embedding; see tools/vendor/README.md.
+ //
+ // Copyright 2016 Pixar
+ //
+@@ -385,13 +386,13 @@
+             if (wrap == UsdGeomTokens->periodic) {
+                 // Cubic, bezier, periodic
+                 std::transform(curveVertexCounts.cbegin(), curveVertexCounts.cend(), 
+-                    segmentCounts.begin(), [vstep](int n) { return n / vstep; });
++                    segmentCounts.begin(), [](int n) { return n / vstep; });
+                 isValid = true;
+             } else if (wrap == UsdGeomTokens->nonperiodic || 
+                     wrap == UsdGeomTokens->pinned) {
+                 // Cubic, bezier, nonperiodic/pinned
+                 std::transform(curveVertexCounts.cbegin(), curveVertexCounts.cend(), 
+-                    segmentCounts.begin(), [vstep](int n) { return (n - 4) / vstep + 1; });
++                    segmentCounts.begin(), [](int n) { return (n - 4) / vstep + 1; });
+                 isValid = true;
+             }
+         } else if (basis == UsdGeomTokens->bspline ||
+--- a/pxr/usd/usdGeom/bboxCache.cpp
++++ b/pxr/usd/usdGeom/bboxCache.cpp
+@@ -1,3 +1,4 @@
++// Modified for libopenusd by Tyler Morgan-Wall, 2026: R embedding; see tools/vendor/README.md.
+ //
+ // Copyright 2016 Pixar
+ //
+@@ -70,7 +71,7 @@
+     UsdGeomBBoxCache* _owner;
+     _ThreadXformCache* _xfCaches;
+ public:
+-    _BBoxTask() : _owner(nullptr), _xfCaches(nullptr) {}
++    _BBoxTask() : _inverseComponentCtm(1.0), _owner(nullptr), _xfCaches(nullptr) {}
+     _BBoxTask(const _PrimContext& primContext, 
+               const GfMatrix4d &inverseComponentCtm,
+               UsdGeomBBoxCache* owner, _ThreadXformCache* xfCaches)
+--- a/pxr/usd/usdUtils/dependencies.cpp
++++ b/pxr/usd/usdUtils/dependencies.cpp
+@@ -1,3 +1,4 @@
++// Modified for libopenusd by Tyler Morgan-Wall, 2026: R embedding; see tools/vendor/README.md.
+ //
+ // Copyright 2016 Pixar
+ //
+@@ -96,7 +97,7 @@
+     }
+ 
+     bool 
+-    PathShouldResolve(
++    DependencyShouldResolve(
+         const SdfLayerRefPtr &layer, 
+         const std::string& resolvedPath,
+         UsdUtils_DependencyType dependencyType)
+@@ -130,7 +131,7 @@
+             splitIdentifier.first);
+ 
+         if (resolvedPath.empty()) {
+-            if (PathShouldResolve(layer, resolvedPath, dependencyType)) {
++            if (DependencyShouldResolve(layer, resolvedPath, dependencyType)) {
+                 unresolvedPaths.insert(anchoredPath);
+             }
+         }
+--- a/pxr/base/vt/value.h
++++ b/pxr/base/vt/value.h
+@@ -1,3 +1,4 @@
++// Modified for libopenusd by Tyler Morgan-Wall, 2026: R embedding; see tools/vendor/README.md.
+ //
+ // Copyright 2016 Pixar
+ //
+@@ -1006,10 +1007,13 @@
+     /// return a default-constructed \p T.
+     template <class T>
+     T Remove() {
+-        T result;
+-        Swap(result);
+-        _Clear();
+-        return result;
++        if constexpr (!std::is_same_v<T, VtValue>) {
++            if (!IsHolding<T>()) {
++                _Clear();
++                return T();
++            }
++        }
++        return UncheckedRemove<T>();
+     }
+ 
+     /// Make this value empty and return the held \p T instance.  If this
+@@ -1017,10 +1021,19 @@
+     /// behavior.
+     template <class T>
+     T UncheckedRemove() {
+-        T result;
+-        UncheckedSwap(result);
+-        _Clear();
+-        return result;
++        if constexpr (std::is_same_v<T, VtValue>) {
++            VtValue result;
++            Swap(result);
++            return result;
++        }
++        else {
++            static_assert(std::is_same_v<T, typename Vt_ValueGetStored<T>::Type>,
++                          "Can only remove a type T that stores as T");
++            // Move out directly instead of swapping with an uninitialized scalar.
++            T result(std::move(_GetMutable<T>()));
++            _Clear();
++            return result;
++        }
+     }
+ 
+     /// If this value holds an object of type \p T, invoke \p mutateFn, passing
+--- a/pxr/base/gf/numericCast.h
++++ b/pxr/base/gf/numericCast.h
+@@ -1,3 +1,4 @@
++// Modified for libopenusd by Tyler Morgan-Wall, 2026: R embedding; see tools/vendor/README.md.
+ //
+ // Copyright 2024 Pixar
+ //
+@@ -96,7 +97,6 @@
+     static_assert(GfIsArithmetic<From>::value &&
+                   GfIsArithmetic<To>::value);
+ 
+-    using FromLimits = std::numeric_limits<From>;
+     using ToLimits = std::numeric_limits<To>;
+ 
+     auto setFail = [&failType](GfNumericCastFailureType ft) {
+@@ -151,8 +151,8 @@
+         // works okay for GfHalf whose max is ~65,000 when converting to
+         // int32_t, say.  In that case we get a range like (-inf, inf), meaning
+         // that all finite halfs are in-range.
+-        From low = static_cast<From>(ToLimits::lowest()) - static_cast<From>(1);
+-        From high = static_cast<From>(ToLimits::max()) + static_cast<From>(1);
++        From low = static_cast<From>(static_cast<long double>(ToLimits::lowest())) - static_cast<From>(1);
++        From high = static_cast<From>(static_cast<long double>(ToLimits::max())) + static_cast<From>(1);
+         
+         if (from <= low) {
+             setFail(GfNumericCastNegOverflow);
+--- a/pxr/base/trace/eventContainer.h
++++ b/pxr/base/trace/eventContainer.h
+@@ -1,3 +1,4 @@
++// Modified for libopenusd by Tyler Morgan-Wall, 2026: R embedding; see tools/vendor/README.md.
+ //
+ // Copyright 2018 Pixar
+ //
+@@ -29,7 +30,7 @@
+     // Intrusively doubly-linked list node that provides contiguous storage
+     // for events.  Only appending events and iterating held events is
+     // supported.
+-    class _Node
++    class alignas(TraceEvent) _Node
+     {
+     public:
+         using const_iterator = const TraceEvent *;
+@@ -85,17 +86,10 @@
+         ~_Node();
+ 
+     private:
+-        union {
+-            struct {
+-                TraceEvent *_end;
+-                TraceEvent *_sentinel;
+-                _Node *_prev;
+-                _Node *_next;
+-            };
+-            // Ensure that _Node is aligned to at least the alignment of
+-            // TraceEvent.
+-            alignas(TraceEvent) char _unused;
+-        };
++        TraceEvent *_end;
++        TraceEvent *_sentinel;
++        _Node *_prev;
++        _Node *_next;
+     };
+ 
+ public:
+--- a/pxr/base/arch/timing.h
++++ b/pxr/base/arch/timing.h
+@@ -1,3 +1,4 @@
++// Modified for libopenusd by Tyler Morgan-Wall, 2026: R embedding; see tools/vendor/README.md.
+ //
+ // Copyright 2016 Pixar
+ //
+@@ -181,7 +182,7 @@
+     }
+ private:
+     bool _started = false;
+-    uint64_t _startTicks;
++    uint64_t _startTicks = 0;
+ };
+ 
+ /// Return the tick time resolution.  Although the number of ticks per second
+--- a/pxr/base/arch/attributes.h
++++ b/pxr/base/arch/attributes.h
+@@ -1,3 +1,4 @@
++// Modified for libopenusd by Tyler Morgan-Wall, 2026: R embedding; see tools/vendor/README.md.
+ //
+ // Copyright 2016 Pixar
+ //
+@@ -263,12 +264,21 @@
+     unsigned int version:24;    // USD version
+     unsigned int priority:8;    // Priority of function
+ };
++
++// The linker collects these descriptors into a contiguous array. ASan must
++// not insert padding between entries; the dispatcher and callbacks remain
++// instrumented. This attribute affects only the two descriptor globals.
++#if defined(ARCH_COMPILER_CLANG) && defined(ARCH_SANITIZE_ADDRESS)
++#   define _ARCH_CONSTRUCTOR_TABLE_ENTRY __attribute__((no_sanitize("address")))
++#else
++#   define _ARCH_CONSTRUCTOR_TABLE_ENTRY
++#endif
+ 
+ // Emit a Arch_ConstructorEntry in the __Data,pxrctor section.
+ #   define ARCH_CONSTRUCTOR(_name, _priority)                                  \
+     static void _name();                                                       \
+     static const Arch_ConstructorEntry _ARCH_CAT_NOEXPAND(arch_ctor_, _name)   \
+-        __attribute__((used, section("__DATA,pxrctor"))) = {                   \
++        __attribute__((used, section("__DATA,pxrctor"))) _ARCH_CONSTRUCTOR_TABLE_ENTRY = {                   \
+         reinterpret_cast<Arch_ConstructorEntry::Type>(&_name),                 \
+         static_cast<unsigned>(PXR_VERSION),                                    \
+         _priority                                                              \
+@@ -279,7 +289,7 @@
+ #   define ARCH_DESTRUCTOR(_name, _priority)                                   \
+     static void _name();                                                       \
+     static const Arch_ConstructorEntry _ARCH_CAT_NOEXPAND(arch_dtor_, _name)   \
+-        __attribute__((used, section("__DATA,pxrdtor"))) = {                   \
++        __attribute__((used, section("__DATA,pxrdtor"))) _ARCH_CONSTRUCTOR_TABLE_ENTRY = {                   \
+         reinterpret_cast<Arch_ConstructorEntry::Type>(&_name),                 \
+         static_cast<unsigned>(PXR_VERSION),                                    \
+         _priority                                                              \
+--- a/pxr/base/arch/assumptions.cpp
++++ b/pxr/base/arch/assumptions.cpp
+@@ -1,3 +1,4 @@
++// Modified for libopenusd by Tyler Morgan-Wall, 2026: R embedding; see tools/vendor/README.md.
+ //
+ // Copyright 2016 Pixar
+ //
+@@ -22,7 +23,6 @@
+ #include <unistd.h>
+ #elif defined(ARCH_OS_DARWIN)
+ #include <sys/sysctl.h>
+-#include <mach-o/arch.h>
+ #elif defined(ARCH_OS_WINDOWS)
+ #include <Windows.h>
+ #include <memory>
+@@ -122,8 +122,10 @@
+      * emulating x64_64 on arm64 which has a far greater performance impact.
+      */
+     const size_t ROSETTA_WORKAROUND_CACHE_LINE_SIZE = 128;
+-    NXArchInfo const* archInfo = NXGetLocalArchInfo();
+-    if (archInfo && ((archInfo->cputype & ~CPU_ARCH_MASK) == CPU_TYPE_ARM)) {
++    int translated = 0;
++    size_t translatedSize = sizeof(translated);
++    if (sysctlbyname("sysctl.proc_translated", &translated, &translatedSize,
++                     nullptr, 0) == 0 && translated) {
+         if ((cacheLineSize != ROSETTA_WORKAROUND_CACHE_LINE_SIZE)) {
+             ARCH_WARNING(
+                 "Cache-line size mismatch may negatively impact performance.");
+--- a/pxr/base/arch/hash.cpp
++++ b/pxr/base/arch/hash.cpp
+@@ -1,3 +1,4 @@
++// Modified for libopenusd by Tyler Morgan-Wall, 2026: R embedding; see tools/vendor/README.md.
+ //
+ // Copyright 2016 Pixar
+ //
+@@ -304,7 +305,9 @@
+     uint8  m_remainder;          // length of unhashed data stashed in m_data
+ };
+ 
+-#define ALLOW_UNALIGNED_READS 1
++// Use the existing aligned-copy path for unaligned input. A CPU's support
++// for unaligned loads does not make typed unaligned dereferences valid C++.
++#define ALLOW_UNALIGNED_READS 0
+ 
+ //
+ // short hash ... it could be used on any message, 
+--- a/pxr/base/arch/timing.cpp
++++ b/pxr/base/arch/timing.cpp
+@@ -1,3 +1,4 @@
++// Modified for libopenusd by Tyler Morgan-Wall, 2026: R embedding; see tools/vendor/README.md.
+ //
+ // Copyright 2016 Pixar
+ //
+@@ -23,8 +24,10 @@
+ template <class T>
+ constexpr static T InitializingState = -2;
+ 
+-static std::atomic<double> 
++#if ARCH_USE_TSC_TIMING
++static std::atomic<double>
+ Arch_NanosecondsPerTick{UninitializedState<double>};
++#endif
+ 
+ // Tick measurement granularity.
+ static std::atomic<int64_t> 
+--- a/pxr/base/plug/staticInterface.cpp
++++ b/pxr/base/plug/staticInterface.cpp
+@@ -1,3 +1,4 @@
++// Modified for libopenusd by Tyler Morgan-Wall, 2026: R embedding; see tools/vendor/README.md.
+ //
+ // Copyright 2016 Pixar
+ //
+@@ -39,7 +40,7 @@
+     // Validate type.
+     // We use FindByName because Find requres that std::type_info has been
+     // regisered, but that won't happen until the plugin is loaded.
+-    const TfType &tfType =
++    const TfType tfType =
+         TfType::FindByName(TfType::GetCanonicalTypeName(type));
+     if (!tfType) {
+         TF_CODING_ERROR("Failed to load plugin interface: "
+--- a/pxr/base/ts/spline.cpp
++++ b/pxr/base/ts/spline.cpp
+@@ -1,3 +1,4 @@
++// Modified for libopenusd by Tyler Morgan-Wall, 2026: R embedding; see tools/vendor/README.md.
+ //
+ // Copyright 2024 Pixar
+ //
+@@ -26,14 +27,7 @@
+ #include <iostream>
+ 
+ PXR_NAMESPACE_OPEN_SCOPE
+-
+-namespace {
+-
+-// Constants for constructing GfInterval objects
+-constexpr bool OPEN = false;
+-constexpr bool CLOSED = true;
+ 
+-} // annonymous namespace
+ 
+ TF_REGISTRY_FUNCTION(TfType)
+ {
+--- a/pxr/base/tf/preprocessorUtilsLite.h
++++ b/pxr/base/tf/preprocessorUtilsLite.h
+@@ -1,3 +1,4 @@
++// Modified for libopenusd by Tyler Morgan-Wall, 2026: R embedding; see tools/vendor/README.md.
+ //
+ // Copyright 2016 Pixar
+ //
+@@ -22,6 +23,16 @@
+ /// header which is somewhat heavy.
+ #define TF_PP_CAT(x, y) TF_PP_CAT_IMPL(x, y)
+ 
++// Distinguish a single argument from multiple arguments (up to 64),
++// without invoking a named variadic macro with an omitted argument in C++17.
++#define TF_PP_HAS_MULTIPLE_ARGS(...) \
++    TF_PP_VARIADIC_SIZE_IMPL(__VA_ARGS__, \
++        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, \
++        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, \
++        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, \
++        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, \
++        )
++
+ // Helper for TF_PP_STRINGIZE supplying macro expansion before pasting
+ #define TF_PP_STRINGIZE_IMPL(x) #x
+ 
+--- a/pxr/base/tf/enum.h
++++ b/pxr/base/tf/enum.h
+@@ -1,3 +1,4 @@
++// Modified for libopenusd by Tyler Morgan-Wall, 2026: R embedding; see tools/vendor/README.md.
+ //
+ // Copyright 2016 Pixar
+ //
+@@ -454,9 +455,13 @@
+ ///
+ /// \ingroup group_tf_RuntimeTyping
+ /// \hideinitializer
+-#define TF_ADD_ENUM_NAME(VAL, ...)                               \
+-    TfEnum::_AddName(VAL, TF_PP_STRINGIZE(VAL),                  \
+-                     TfEnum::_NameIdent(__VA_ARGS__));
++#define TF_ADD_ENUM_NAME(...) \
++    TF_PP_CAT(_TF_ADD_ENUM_NAME_, TF_PP_VARIADIC_SIZE(__VA_ARGS__))(__VA_ARGS__)
++#define _TF_ADD_ENUM_NAME_1(VAL) \
++    TfEnum::_AddName(VAL, TF_PP_STRINGIZE(VAL), nullptr);
++#define _TF_ADD_ENUM_NAME_2(VAL, displayName) \
++    TfEnum::_AddName(VAL, TF_PP_STRINGIZE(VAL), \
++                     TfEnum::_NameIdent(displayName));
+ 
+ PXR_NAMESPACE_CLOSE_SCOPE
+ 
+--- a/pxr/base/tf/fileUtils.cpp
++++ b/pxr/base/tf/fileUtils.cpp
+@@ -1,3 +1,4 @@
++// Modified for libopenusd by Tyler Morgan-Wall, 2026: R embedding; see tools/vendor/README.md.
+ //
+ // Copyright 2016 Pixar
+ //
+@@ -376,7 +377,7 @@
+     if((hFind = FindFirstFileW(szPath, &fdFile)) == INVALID_HANDLE_VALUE)
+     {
+         if (errMsg) {
+-            *errMsg = TfStringPrintf("Path not found: %s", szPath);
++            *errMsg = TfStringPrintf("Path not found: %s", dirPath.c_str());
+         }
+         return false;
+     }
+@@ -411,9 +412,7 @@
+     }
+ #else
+     DIR *dir;
+-    struct dirent entry;
+-    struct dirent *result;
+-    int rc;
++    int readError = 0;
+ 
+     if ((dir = opendir(dirPath.c_str())) == NULL) {
+         if (errMsg) {
+@@ -423,9 +422,16 @@
+         return false;
+     }
+ 
+-    for (rc = readdir_r(dir, &entry, &result);
+-         result && rc == 0;
+-         rc = readdir_r(dir, &entry, &result)) {
++    // Each call owns its DIR stream. Consume the entry before reading again,
++    // and reset errno each time because fstatat below may also set it.
++    for (;;) {
++        errno = 0;
++        struct dirent *result = readdir(dir);
++        if (!result) {
++            readError = errno;
++            break;
++        }
++        const struct dirent &entry = *result;
+ 
+         if (strcmp(entry.d_name, ".") == 0 || 
+             strcmp(entry.d_name, "..") == 0)
+@@ -470,6 +476,13 @@
+     }
+ 
+     closedir(dir);
++    if (readError) {
++        if (errMsg) {
++            *errMsg = TfStringPrintf("readdir failed: %s",
++                                    ArchStrerror(readError).c_str());
++        }
++        return false;
++    }
+ #endif
+     return true;
+ }    
+--- a/pxr/base/tf/hashmap.h
++++ b/pxr/base/tf/hashmap.h
+@@ -1,3 +1,4 @@
++// Modified for libopenusd by Tyler Morgan-Wall, 2026: R embedding; see tools/vendor/README.md.
+ //
+ // Copyright 2016 Pixar
+ //
+@@ -9,8 +10,7 @@
+ // erase(const_iterator) returns nothing.
+ //
+ // Wrapping provides a convenient way to switch between implementations.
+-// The GNU extension (currently) has the best overall performance but
+-// isn't standard.  Otherwise we use the C++11 standard implementation.
++// Use the standard unordered containers on every compiler.
+ 
+ #ifndef PXR_BASE_TF_HASHMAP_H
+ #define PXR_BASE_TF_HASHMAP_H
+@@ -18,232 +18,11 @@
+ #include "pxr/pxr.h"
+ #include "pxr/base/arch/defines.h"
+ 
+-#if defined(ARCH_HAS_GNU_STL_EXTENSIONS)
+-#include <ext/hash_map>
+-#else
+ #include <unordered_map>
+-#endif // ARCH_HAS_GNU_STL_EXTENSIONS
+ 
+ PXR_NAMESPACE_OPEN_SCOPE
+-
+-#if defined(ARCH_HAS_GNU_STL_EXTENSIONS)
+-
+-template<class Key, class Mapped, class HashFn = __gnu_cxx::hash<Key>,
+-	 class EqualKey = __gnu_cxx::equal_to<Key>,
+-         class Alloc = __gnu_cxx::allocator<Mapped> >
+-class TfHashMap :
+-    private __gnu_cxx::hash_map<Key, Mapped, HashFn, EqualKey, Alloc> {
+-    typedef __gnu_cxx::hash_map<Key, Mapped, HashFn, EqualKey, Alloc> _Base;
+-public:
+-    typedef typename _Base::key_type key_type;
+-    typedef typename _Base::mapped_type mapped_type;
+-    typedef typename _Base::value_type value_type;
+-    typedef typename _Base::hasher hasher;
+-    typedef typename _Base::key_equal key_equal;
+-    typedef typename _Base::size_type size_type;
+-    typedef typename _Base::difference_type difference_type;
+-    typedef typename _Base::pointer pointer;
+-    typedef typename _Base::const_pointer const_pointer;
+-    typedef typename _Base::reference reference;
+-    typedef typename _Base::const_reference const_reference;
+-    typedef typename _Base::iterator iterator;
+-    typedef typename _Base::const_iterator const_iterator;
+-    typedef typename _Base::allocator_type allocator_type;
+-    // No local_iterator nor any methods using them.
+-
+-    TfHashMap() : _Base() { }
+-    explicit
+-    TfHashMap(size_type n, const hasher& hf = hasher(),
+-              const key_equal& eql = key_equal(),
+-              const allocator_type& alloc = allocator_type()) :
+-        _Base(n, hf, eql, alloc) { }
+-    explicit
+-    TfHashMap(const allocator_type& alloc) :
+-        _Base(0, hasher(), key_equal(), alloc) { }
+-    template<class InputIterator>
+-    TfHashMap(InputIterator first, InputIterator last,
+-              size_type n = 0, const hasher& hf = hasher(),
+-              const key_equal& eql = key_equal(),
+-              const allocator_type& alloc = allocator_type()) :
+-        _Base(first, last, n, hf, eql, alloc) { }
+-    TfHashMap(const TfHashMap& other) : _Base(other) { }
+-
+-    TfHashMap& operator=(const TfHashMap& rhs) {
+-        _Base::operator=(rhs);
+-        return *this;
+-    }
+-
+-    iterator begin() { return _Base::begin(); }
+-    const_iterator begin() const { return const_iterator(_Base::begin()); }
+-    // size_type bucket(const key_type& key) const;
+-    using _Base::bucket_count;
+-    size_type bucket_size(size_type n) const { return _Base::elems_in_bucket(n); }
+-    const_iterator cbegin() const { return const_iterator(_Base::begin()); }
+-    const_iterator cend() const { return const_iterator(_Base::end()); }
+-    using _Base::clear;
+-    using _Base::count;
+-    using _Base::empty;
+-    iterator end() { return _Base::end(); }
+-    const_iterator end() const { return const_iterator(_Base::end()); }
+-    std::pair<iterator,iterator> equal_range(const key_type& key) {
+-        return _Base::equal_range(key);
+-    }
+-    std::pair<const_iterator,const_iterator> equal_range(const key_type& key) const {
+-        return _Base::equal_range(key);
+-    }
+-    size_type erase(const key_type& key) { return _Base::erase(key); }
+-    void erase(const_iterator position) {
+-        _Base::erase(_MakeIterator(position));
+-    }
+-    void erase(const_iterator first, const_iterator last) {
+-        _Base::erase(_MakeIterator(first), _MakeIterator(last));
+-    }
+-    iterator find(const key_type& key) { return _Base::find(key); }
+-    const_iterator find(const key_type& key) const {
+-        return const_iterator(_Base::find(key));
+-    }
+-    using _Base::get_allocator;
+-    hasher hash_function() const { return _Base::hash_funct(); }
+-    using _Base::insert;
+-    iterator insert(const_iterator, const value_type& v) {
+-        return insert(v).first;
+-    }
+-    using _Base::key_eq;
+-    float load_factor() const {
+-        return static_cast<float>(static_cast<double>(size()) / bucket_count());
+-    }
+-    using _Base::max_bucket_count;
+-    float max_load_factor() const { return 1.0; }
+-    // void max_load_factor(float) { }
+-    using _Base::max_size;
+-    void rehash(size_type n) { _Base::resize(__gnu_cxx::__stl_next_prime(n)); }
+-    void reserve(size_type n) { _Base::resize(n); }
+-    using _Base::size;
+-    void swap(TfHashMap& other) { _Base::swap(other); }
+-    mapped_type& operator[](const key_type& k) { return _Base::operator[](k); }
+-
+-    template<class Key2, class Mapped2, class HashFn2, class EqualKey2, class Alloc2>
+-    friend bool
+-    operator==(const TfHashMap<Key2, Mapped2, HashFn2, EqualKey2, Alloc2>&,
+-               const TfHashMap<Key2, Mapped2, HashFn2, EqualKey2, Alloc2>&);
+-
+-private:
+-    // _Base::erase() takes an iterator, not a const_iterator.  We happen
+-    // to know const_iterator and iterator have the same layout.
+-    static const iterator& _MakeIterator(const const_iterator& i) {
+-        return reinterpret_cast<const iterator&>(i);
+-    }
+-};
+-
+-template<class Key, class Mapped, class HashFn = __gnu_cxx::hash<Key>,
+-	 class EqualKey = __gnu_cxx::equal_to<Key>,
+-         class Alloc = __gnu_cxx::allocator<Mapped> >
+-class TfHashMultiMap :
+-    private __gnu_cxx::hash_multimap<Key, Mapped, HashFn, EqualKey, Alloc> {
+-    typedef __gnu_cxx::hash_multimap<Key, Mapped, HashFn, EqualKey, Alloc> _Base;
+-public:
+-    typedef typename _Base::key_type key_type;
+-    typedef typename _Base::mapped_type mapped_type;
+-    typedef typename _Base::value_type value_type;
+-    typedef typename _Base::hasher hasher;
+-    typedef typename _Base::key_equal key_equal;
+-    typedef typename _Base::size_type size_type;
+-    typedef typename _Base::difference_type difference_type;
+-    typedef typename _Base::pointer pointer;
+-    typedef typename _Base::const_pointer const_pointer;
+-    typedef typename _Base::reference reference;
+-    typedef typename _Base::const_reference const_reference;
+-    typedef typename _Base::iterator iterator;
+-    typedef typename _Base::const_iterator const_iterator;
+-    typedef typename _Base::allocator_type allocator_type;
+-    // No local_iterator nor any methods using them.
+-
+-    TfHashMultiMap() : _Base() { }
+-    explicit
+-    TfHashMultiMap(size_type n, const hasher& hf = hasher(),
+-                   const key_equal& eql = key_equal(),
+-                   const allocator_type& alloc = allocator_type()) :
+-        _Base(n, hf, eql, alloc) { }
+-    explicit
+-    TfHashMultiMap(const allocator_type& alloc) :
+-        _Base(0, hasher(), key_equal(), alloc) { }
+-    template<class InputIterator>
+-    TfHashMultiMap(InputIterator first, InputIterator last,
+-                   size_type n = 0, const hasher& hf = hasher(),
+-                   const key_equal& eql = key_equal(),
+-                   const allocator_type& alloc = allocator_type()) :
+-        _Base(first, last, n, hf, eql, alloc) { }
+-    TfHashMultiMap(const TfHashMultiMap& other) : _Base(other) { }
+-
+-    TfHashMultiMap& operator=(const TfHashMultiMap& rhs) {
+-        _Base::operator=(rhs);
+-        return *this;
+-    }
+-
+-    iterator begin() { return _Base::begin(); }
+-    const_iterator begin() const { return const_iterator(_Base::begin()); }
+-    // size_type bucket(const key_type& key) const;
+-    using _Base::bucket_count;
+-    size_type bucket_size(size_type n) const { return _Base::elems_in_bucket(n); }
+-    const_iterator cbegin() const { return const_iterator(_Base::begin()); }
+-    const_iterator cend() const { return const_iterator(_Base::end()); }
+-    using _Base::clear;
+-    using _Base::count;
+-    using _Base::empty;
+-    iterator end() { return _Base::end(); }
+-    const_iterator end() const { return const_iterator(_Base::end()); }
+-    std::pair<iterator,iterator> equal_range(const key_type& key) {
+-        return _Base::equal_range(key);
+-    }
+-    std::pair<const_iterator,const_iterator> equal_range(const key_type& key) const {
+-        return _Base::equal_range(key);
+-    }
+-    size_type erase(const key_type& key) { return _Base::erase(key); }
+-    void erase(const_iterator position) {
+-        _Base::erase(_MakeIterator(position));
+-    }
+-    void erase(const_iterator first, const_iterator last) {
+-        _Base::erase(_MakeIterator(first), _MakeIterator(last));
+-    }
+-    iterator find(const key_type& key) { return _Base::find(key); }
+-    const_iterator find(const key_type& key) const {
+-        return const_iterator(_Base::find(key));
+-    }
+-    using _Base::get_allocator;
+-    hasher hash_function() const { return _Base::hash_funct(); }
+-    using _Base::insert;
+-    iterator insert(const_iterator, const value_type& v) {
+-        return insert(v).first;
+-    }
+-    using _Base::key_eq;
+-    float load_factor() const {
+-        return static_cast<float>(static_cast<double>(size()) / bucket_count());
+-    }
+-    using _Base::max_bucket_count;
+-    float max_load_factor() const { return 1.0; }
+-    // void max_load_factor(float) { }
+-    using _Base::max_size;
+-    void rehash(size_type n) { _Base::resize(__gnu_cxx::__stl_next_prime(n)); }
+-    void reserve(size_type n) { _Base::resize(n); }
+-    using _Base::size;
+-    void swap(TfHashMultiMap& other) { _Base::swap(other); }
+-    mapped_type& operator[](const key_type& k) { return _Base::operator[](k); }
+ 
+-    template<class Key2, class Mapped2, class HashFn2, class EqualKey2, class Alloc2>
+-    friend bool
+-    operator==(const TfHashMap<Key2, Mapped2, HashFn2, EqualKey2, Alloc2>&,
+-               const TfHashMap<Key2, Mapped2, HashFn2, EqualKey2, Alloc2>&);
+ 
+-private:
+-    // _Base::erase() takes an iterator, not a const_iterator.  We happen
+-    // to know const_iterator and iterator have the same layout.
+-    static const iterator& _MakeIterator(const const_iterator& i) {
+-        return reinterpret_cast<const iterator&>(i);
+-    }
+-};
+-
+-#else
+-
+ template<class Key, class Mapped, class HashFn = std::hash<Key>,
+ 	 class EqualKey = std::equal_to<Key>,
+          class Alloc = std::allocator<std::pair<const Key, Mapped> > >
+@@ -430,7 +209,6 @@
+                const TfHashMap<Key2, Mapped2, HashFn2, EqualKey2, Alloc2>&);
+ };
+ 
+-#endif // ARCH_HAS_GNU_STL_EXTENSIONS
+ 
+ template<class Key, class Mapped, class HashFn, class EqualKey, class Alloc>
+ inline void
+--- a/pxr/base/tf/diagnostic.h
++++ b/pxr/base/tf/diagnostic.h
+@@ -1,3 +1,4 @@
++// Modified for libopenusd by Tyler Morgan-Wall, 2026: R embedding; see tools/vendor/README.md.
+ //
+ // Copyright 2016 Pixar
+ //
+@@ -27,6 +28,7 @@
+ 
+ #include "pxr/base/arch/hints.h"
+ #include "pxr/base/tf/diagnosticHelper.h"
++#include "pxr/base/tf/preprocessorUtilsLite.h"
+ 
+ #include <stddef.h>
+ #include <stdarg.h>
+@@ -390,10 +392,17 @@
+     Tf_PostQuietlyErrorHelper(TF_CALL_CONTEXT, __VA_ARGS__)
+ 
+ // See documentation above.
+-#define TF_VERIFY(cond, ...)                                                   \
+-    (ARCH_LIKELY(cond) ? true :                                                \
+-     Tf_FailedVerifyHelper(TF_CALL_CONTEXT, # cond,                            \
+-                           Tf_VerifyStringFormat(__VA_ARGS__)))
++// Dispatch before introducing a named condition argument so TF_VERIFY(cond)
++// is also valid with pedantic C++17 compilers. Formatting remains lazy.
++#define TF_VERIFY(...) \
++    TF_PP_CAT(_TF_VERIFY_, TF_PP_HAS_MULTIPLE_ARGS(__VA_ARGS__))(__VA_ARGS__)
++#define _TF_VERIFY_0(cond) \
++    (ARCH_LIKELY(cond) ? true : \
++     Tf_FailedVerifyHelper(TF_CALL_CONTEXT, #cond, nullptr))
++#define _TF_VERIFY_1(cond, ...) \
++    (ARCH_LIKELY(cond) ? true : \
++     Tf_FailedVerifyHelper(TF_CALL_CONTEXT, #cond, \
++                          Tf_VerifyStringFormat(__VA_ARGS__)))
+ 
+ // Helpers for TF_VERIFY.
+ TF_API  bool
+--- a/pxr/base/tf/hashset.h
++++ b/pxr/base/tf/hashset.h
+@@ -1,3 +1,4 @@
++// Modified for libopenusd by Tyler Morgan-Wall, 2026: R embedding; see tools/vendor/README.md.
+ //
+ // Copyright 2016 Pixar
+ //
+@@ -9,8 +10,7 @@
+ // erase(const_iterator) returns nothing.
+ //
+ // Wrapping provides a convenient way to switch between implementations.
+-// The GNU extension (currently) has the best overall performance but
+-// isn't standard.  Otherwise we use the C++11 standard implementation.
++// Use the standard unordered containers on every compiler.
+ 
+ #ifndef PXR_BASE_TF_HASHSET_H
+ #define PXR_BASE_TF_HASHSET_H
+@@ -18,228 +18,11 @@
+ #include "pxr/pxr.h"
+ #include "pxr/base/arch/defines.h"
+ 
+-#if defined(ARCH_HAS_GNU_STL_EXTENSIONS)
+-#include <ext/hash_set>
+-#else
+ #include <unordered_set>
+-#endif // ARCH_HAS_GNU_STL_EXTENSIONS
+ 
+ PXR_NAMESPACE_OPEN_SCOPE
+-
+-#if defined(ARCH_HAS_GNU_STL_EXTENSIONS)
+-
+-template<class Key, class HashFn = __gnu_cxx::hash<Key>,
+-	 class EqualKey = __gnu_cxx::equal_to<Key>,
+-         class Alloc = __gnu_cxx::allocator<Key> >
+-class TfHashSet :
+-    private __gnu_cxx::hash_set<Key, HashFn, EqualKey, Alloc> {
+-    typedef __gnu_cxx::hash_set<Key, HashFn, EqualKey, Alloc> _Base;
+-public:
+-    typedef typename _Base::key_type key_type;
+-    typedef typename _Base::value_type value_type;
+-    typedef typename _Base::hasher hasher;
+-    typedef typename _Base::key_equal key_equal;
+-    typedef typename _Base::size_type size_type;
+-    typedef typename _Base::difference_type difference_type;
+-    typedef typename _Base::pointer pointer;
+-    typedef typename _Base::const_pointer const_pointer;
+-    typedef typename _Base::reference reference;
+-    typedef typename _Base::const_reference const_reference;
+-    typedef typename _Base::iterator iterator;
+-    typedef typename _Base::const_iterator const_iterator;
+-    typedef typename _Base::allocator_type allocator_type;
+-    // No local_iterator nor any methods using them.
+-
+-    TfHashSet() : _Base() { }
+-    explicit
+-    TfHashSet(size_type n, const hasher& hf = hasher(),
+-              const key_equal& eql = key_equal(),
+-              const allocator_type& alloc = allocator_type()) :
+-        _Base(n, hf, eql, alloc) { }
+-    explicit
+-    TfHashSet(const allocator_type& alloc) :
+-        _Base(0, hasher(), key_equal(), alloc) { }
+-    template<class InputIterator>
+-    TfHashSet(InputIterator first, InputIterator last,
+-              size_type n = 0, const hasher& hf = hasher(),
+-              const key_equal& eql = key_equal(),
+-              const allocator_type& alloc = allocator_type()) :
+-        _Base(first, last, n, hf, eql, alloc) { }
+-    TfHashSet(const TfHashSet& other) : _Base(other) { }
+-
+-    TfHashSet& operator=(const TfHashSet& rhs) {
+-        _Base::operator=(rhs);
+-        return *this;
+-    }
+-
+-    iterator begin() { return _Base::begin(); }
+-    const_iterator begin() const { return const_iterator(_Base::begin()); }
+-    // size_type bucket(const key_type& key) const;
+-    using _Base::bucket_count;
+-    size_type bucket_size(size_type n) const { return _Base::elems_in_bucket(n); }
+-    const_iterator cbegin() const { return const_iterator(_Base::begin()); }
+-    const_iterator cend() const { return const_iterator(_Base::end()); }
+-    using _Base::clear;
+-    using _Base::count;
+-    using _Base::empty;
+-    iterator end() { return _Base::end(); }
+-    const_iterator end() const { return const_iterator(_Base::end()); }
+-    std::pair<iterator,iterator> equal_range(const key_type& key) {
+-        return _Base::equal_range(key);
+-    }
+-    std::pair<const_iterator,const_iterator> equal_range(const key_type& key) const {
+-        return _Base::equal_range(key);
+-    }
+-    size_type erase(const key_type& key) { return _Base::erase(key); }
+-    void erase(const_iterator position) {
+-        _Base::erase(_MakeIterator(position));
+-    }
+-    void erase(const_iterator first, const_iterator last) {
+-        _Base::erase(_MakeIterator(first), _MakeIterator(last));
+-    }
+-    iterator find(const key_type& key) { return _Base::find(key); }
+-    const_iterator find(const key_type& key) const {
+-        return const_iterator(_Base::find(key));
+-    }
+-    using _Base::get_allocator;
+-    hasher hash_function() const { return _Base::hash_funct(); }
+-    using _Base::insert;
+-    iterator insert(const_iterator, const value_type& v) {
+-        return insert(v).first;
+-    }
+-    using _Base::key_eq;
+-    float load_factor() const {
+-        return static_cast<float>(static_cast<double>(size()) / bucket_count());
+-    }
+-    using _Base::max_bucket_count;
+-    float max_load_factor() const { return 1.0; }
+-    // void max_load_factor(float) { }
+-    using _Base::max_size;
+-    void rehash(size_type n) { _Base::resize(__gnu_cxx::__stl_next_prime(n)); }
+-    void reserve(size_type n) { _Base::resize(n); }
+-    using _Base::size;
+-    void swap(TfHashSet& other) { _Base::swap(other); }
+-
+-    template<class Key2, class HashFn2, class EqualKey2, class Alloc2>
+-    friend bool
+-    operator==(const TfHashSet<Key2, HashFn2, EqualKey2, Alloc2>&,
+-               const TfHashSet<Key2, HashFn2, EqualKey2, Alloc2>&);
+-
+-private:
+-    // _Base::erase() takes an iterator, not a const_iterator.  We happen
+-    // to know const_iterator and iterator have the same layout.
+-    static const iterator& _MakeIterator(const const_iterator& i) {
+-        return reinterpret_cast<const iterator&>(i);
+-    }
+-};
+-
+-template<class Key, class HashFn = __gnu_cxx::hash<Key>,
+-	 class EqualKey = __gnu_cxx::equal_to<Key>,
+-         class Alloc = __gnu_cxx::allocator<Key> >
+-class TfHashMultiSet :
+-    private __gnu_cxx::hash_multiset<Key, HashFn, EqualKey, Alloc> {
+-    typedef __gnu_cxx::hash_multiset<Key, HashFn, EqualKey, Alloc> _Base;
+-public:
+-    typedef typename _Base::key_type key_type;
+-    typedef typename _Base::value_type value_type;
+-    typedef typename _Base::hasher hasher;
+-    typedef typename _Base::key_equal key_equal;
+-    typedef typename _Base::size_type size_type;
+-    typedef typename _Base::difference_type difference_type;
+-    typedef typename _Base::pointer pointer;
+-    typedef typename _Base::const_pointer const_pointer;
+-    typedef typename _Base::reference reference;
+-    typedef typename _Base::const_reference const_reference;
+-    typedef typename _Base::iterator iterator;
+-    typedef typename _Base::const_iterator const_iterator;
+-    typedef typename _Base::allocator_type allocator_type;
+-    // No local_iterator nor any methods using them.
+-
+-    TfHashMultiSet() : _Base() { }
+-    explicit
+-    TfHashMultiSet(size_type n, const hasher& hf = hasher(),
+-                   const key_equal& eql = key_equal(),
+-                   const allocator_type& alloc = allocator_type()) :
+-        _Base(n, hf, eql, alloc) { }
+-    explicit
+-    TfHashMultiSet(const allocator_type& alloc) :
+-        _Base(0, hasher(), key_equal(), alloc) { }
+-    template<class InputIterator>
+-    TfHashMultiSet(InputIterator first, InputIterator last,
+-                   size_type n = 0, const hasher& hf = hasher(),
+-                   const key_equal& eql = key_equal(),
+-                   const allocator_type& alloc = allocator_type()) :
+-        _Base(first, last, n, hf, eql, alloc) { }
+-    TfHashMultiSet(const TfHashMultiSet& other) : _Base(other) { }
+-
+-    TfHashMultiSet& operator=(const TfHashMultiSet& rhs) {
+-        _Base::operator=(rhs);
+-        return *this;
+-    }
+-
+-    iterator begin() { return _Base::begin(); }
+-    const_iterator begin() const { return const_iterator(_Base::begin()); }
+-    // size_type bucket(const key_type& key) const;
+-    using _Base::bucket_count;
+-    size_type bucket_size(size_type n) const { return _Base::elems_in_bucket(n); }
+-    const_iterator cbegin() const { return const_iterator(_Base::begin()); }
+-    const_iterator cend() const { return const_iterator(_Base::end()); }
+-    using _Base::clear;
+-    using _Base::count;
+-    using _Base::empty;
+-    iterator end() { return _Base::end(); }
+-    const_iterator end() const { return const_iterator(_Base::end()); }
+-    std::pair<iterator,iterator> equal_range(const key_type& key) {
+-        return _Base::equal_range(key);
+-    }
+-    std::pair<const_iterator,const_iterator> equal_range(const key_type& key) const {
+-        return _Base::equal_range(key);
+-    }
+-    size_type erase(const key_type& key) { return _Base::erase(key); }
+-    void erase(const_iterator position) {
+-        _Base::erase(_MakeIterator(position));
+-    }
+-    void erase(const_iterator first, const_iterator last) {
+-        _Base::erase(_MakeIterator(first), _MakeIterator(last));
+-    }
+-    iterator find(const key_type& key) { return _Base::find(key); }
+-    const_iterator find(const key_type& key) const {
+-        return const_iterator(_Base::find(key));
+-    }
+-    using _Base::get_allocator;
+-    hasher hash_function() const { return _Base::hash_funct(); }
+-    using _Base::insert;
+-    iterator insert(const_iterator, const value_type& v) {
+-        return insert(v).first;
+-    }
+-    using _Base::key_eq;
+-    float load_factor() const {
+-        return static_cast<float>(static_cast<double>(size()) / bucket_count());
+-    }
+-    using _Base::max_bucket_count;
+-    float max_load_factor() const { return 1.0; }
+-    // void max_load_factor(float) { }
+-    using _Base::max_size;
+-    void rehash(size_type n) { _Base::resize(__gnu_cxx::__stl_next_prime(n)); }
+-    void reserve(size_type n) { _Base::resize(n); }
+-    using _Base::size;
+-    void swap(TfHashMultiSet& other) { _Base::swap(other); }
+ 
+-    template<class Key2, class HashFn2, class EqualKey2, class Alloc2>
+-    friend bool
+-    operator==(const TfHashMultiSet<Key2, HashFn2, EqualKey2, Alloc2>&,
+-               const TfHashMultiSet<Key2, HashFn2, EqualKey2, Alloc2>&);
+ 
+-private:
+-    // _Base::erase() takes an iterator, not a const_iterator.  We happen
+-    // to know const_iterator and iterator have the same layout.
+-    static const iterator& _MakeIterator(const const_iterator& i) {
+-        return reinterpret_cast<const iterator&>(i);
+-    }
+-};
+-
+-#else
+-
+ template<class Key, class HashFn = std::hash<Key>,
+ 	 class EqualKey = std::equal_to<Key>,
+          class Alloc = std::allocator<Key> >
+@@ -422,7 +205,6 @@
+                const TfHashMultiSet<Key2, HashFn2, EqualKey2, Alloc2>&);
+ };
+ 
+-#endif // ARCH_HAS_GNU_STL_EXTENSIONS
+ 
+ template<class Key, class HashFn, class EqualKey, class Alloc>
+ inline void

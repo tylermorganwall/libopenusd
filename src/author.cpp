@@ -1,5 +1,6 @@
 #include <Rcpp.h>
 #include "operation.h"
+#include <pxr/base/arch/fileSystem.h>
 #include <pxr/base/gf/matrix4d.h>
 #include <pxr/base/gf/quatd.h>
 #include <pxr/base/gf/quatf.h>
@@ -379,7 +380,12 @@ extern "C" SEXP libopenusd_write_stage_R(SEXP document, SEXP filename) {
             message << "Cannot write USD stage \"" << path << "\"";
             if (code) message << ": " << std::error_code(code, std::generic_category()).message();
             std::error_code query_error;
-            const auto destination = std::filesystem::u8path(path).parent_path();
+#ifdef _WIN32
+            const std::filesystem::path output_path(ArchWindowsUtf8ToUtf16(path));
+#else
+            const std::filesystem::path output_path(path);
+#endif
+            const auto destination = output_path.parent_path();
             const auto space = std::filesystem::space(destination.empty() ? "." : destination, query_error);
             if (!query_error) message << ". Available destination space: " << space.available << " bytes";
             throw std::runtime_error(message.str());

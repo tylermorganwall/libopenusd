@@ -62,3 +62,22 @@ extracted sources during configuration and leaves already prepared sources
 unchanged. Python is not used for preparation or installation. The source subset
 is for libopenusd's configured native build; disabled upstream features are not
 shipped.
+
+## R-hub compiler and sanitizer fixes
+
+The native bundle uses standard unordered containers and `readdir`, includes
+Windows sharing declarations, and avoids redefining Windows SDK constants.
+Diagnostic macros accept omitted optional arguments in pedantic C++17 builds.
+Pointer formats, object lifetimes, small-array sorting, trace-node alignment,
+and uninitialized values are corrected without disabling compiler warnings.
+Unused private crash-handler helpers are removed; platform-specific helpers
+are only compiled on the platforms that use them.
+
+Unaligned hash input uses OpenUSD's existing aligned-copy path. Cached Sdf
+identities with no remaining handles are deleted when their registry forgets
+them. Live handles retain their detached identities until the final release.
+
+On macOS, only the constructor/destructor table descriptors carry Clang's
+`no_sanitize("address")` attribute. This preserves the contiguous linker-table
+layout by preventing redzones between descriptors. The dispatcher, callbacks,
+and other library globals remain instrumented. See the [Clang documentation](https://clang.llvm.org/docs/AddressSanitizer.html#disabling-instrumentation-with-attribute-no-sanitize-address).

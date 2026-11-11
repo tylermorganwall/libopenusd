@@ -33,3 +33,8 @@
 - Overall: Reduces the bundled sources by removing unused imaging/viewer code,
   upstream tests, tutorials, Python bindings, and documentation assets while
   preserving native scene-data functionality.
+- Overall: Fixes additional Windows header conflicts and extracts the bundled
+  library using R's internal archive reader, without requiring an external xz.
+- Overall: Fixes sanitizer failures in native hashing and macOS initialization,
+  reclaims unused layer identities, and corrects uninitialized scalar removal.
+  Updates deprecated APIs and resolves compiler portability warnings.

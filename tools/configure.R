@@ -344,7 +344,10 @@ if (
   )
 }
 if (!dir.exists(source_dir)) {
-  utils::untar(source_archive, exdir = "src")
+  status = utils::untar(source_archive, exdir = "src", tar = "internal")
+  if (status != 0L) {
+    stop("Cannot extract OpenUSD sources.")
+  }
   if (!file.rename("src/OpenUSD-26.08", source_dir)) {
     stop("Cannot extract OpenUSD sources.")
   }
