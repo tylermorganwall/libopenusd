@@ -3,6 +3,7 @@
 #include <R_ext/Rdynload.h>
 #include <R_ext/Visibility.h>
 #include "bridge.h"
+#include "pxr/base/arch/rDiagnostics.h"
 extern "C" SEXP libopenusd_inspect_R(SEXP, SEXP, SEXP);
 extern "C" SEXP libopenusd_write_stage_R(SEXP, SEXP);
 #include <climits>
@@ -117,7 +118,20 @@ extern "C" SEXP libopenusd_stage_close_R(SEXP stage) {
     return R_NilValue;
 }
 
+extern "C" SEXP libopenusd_messages_R() {
+    SEXP messages = PROTECT(Rf_allocVector(STRSXP, 129));
+    char message[2048];
+    int count = 0;
+    while (count < 129 && LibOpenUsdDiagnosticNext(message, sizeof(message))) {
+        SET_STRING_ELT(messages, count++, Rf_mkCharCE(message, CE_UTF8));
+    }
+    SEXP result = PROTECT(Rf_lengthgets(messages, count));
+    UNPROTECT(2);
+    return result;
+}
+
 static const R_CallMethodDef call_methods[] = {
+    {"libopenusd_messages_R", (DL_FUNC) &libopenusd_messages_R, 0},
     {"libopenusd_write_stage_R", (DL_FUNC) &libopenusd_write_stage_R, 2},
     {"libopenusd_inspect_R", (DL_FUNC) &libopenusd_inspect_R, 3},
     {"libopenusd_initialize_R", (DL_FUNC) &libopenusd_initialize_R, 1},

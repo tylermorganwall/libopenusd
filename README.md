@@ -22,8 +22,11 @@ limit build memory. Linux uses the same build path. Windows includes
 validated on a Windows host. RcppParallel supplies TBB headers and its runtime,
 so another TBB installation is not required.
 
-The core is statically linked into the package DLL, and OpenUSD schema data is
-installed under `usd/`. The public headers contain only an opaque C interface;
+Configuration lives in `tools/configure.R`; `configure` and `configure.win` are
+launchers for that script. The CMake wrapper in `tools/vendor/cmake/` builds only
+the vendored OpenUSD static library. R's standard compilation
+and linking rules build the package interface and link that archive into the
+package shared library. OpenUSD schema data is installed under `usd/`. The public headers contain only an opaque C interface;
 consumers do not link their own copy of OpenUSD or include its C++ SDK headers.
 The upstream license and third-party notices are retained. This is a development
 package, not a claim of CRAN submission readiness.
@@ -142,3 +145,10 @@ encodes a named list as dictionary fields; `templates = TRUE` omits field data
 while retaining type and attributes. This uses no RDS payload or text encoding.
 Environments, functions, and external pointers are rejected. Exceptions and
 OpenUSD diagnostics are returned as R errors after releasing native resources.
+
+Native operations use at most two threads by default. Set
+`LIBOPENUSD_NUM_THREADS` to a positive integer to request another limit.
+The limit is scoped to each operation and respects stricter limits imposed by
+other packages sharing the TBB runtime. Retrieve buffered warnings and debug
+output with `usd_messages()`. After a native invariant failure, restart R before
+using the provider again.

@@ -1,4 +1,5 @@
 #include <Rcpp.h>
+#include "operation.h"
 #include <pxr/base/tf/errorMark.h>
 #include <pxr/base/vt/array.h>
 #include <pxr/base/vt/dictionary.h>
@@ -102,6 +103,7 @@ Rcpp::List inspect_prim(const pxr::UsdPrim &prim, Rcpp::CharacterVector properti
 
 extern "C" SEXP libopenusd_inspect_R(SEXP filename, SEXP selectors, SEXP properties) {
     BEGIN_RCPP
+    LibOpenUsdOperation scope;
     if (TYPEOF(filename) != STRSXP || Rf_xlength(filename) != 1 || STRING_ELT(filename, 0) == NA_STRING ||
         TYPEOF(selectors) != STRSXP || TYPEOF(properties) != STRSXP) {
         Rcpp::stop("Expected a filename, character selectors, and character property names.");
@@ -133,6 +135,7 @@ extern "C" SEXP libopenusd_inspect_R(SEXP filename, SEXP selectors, SEXP propert
             result[i] = inspect_prim(selected[i], property_names);
         }
         if (!errors.IsClean()) throw std::runtime_error("USD metadata query failed.");
+        LibOpenUsdCheckFailure();
         return result;
     } catch (const std::exception &error) {
         std::string message = error.what();

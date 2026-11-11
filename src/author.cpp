@@ -1,4 +1,5 @@
 #include <Rcpp.h>
+#include "operation.h"
 #include <pxr/base/gf/matrix4d.h>
 #include <pxr/base/gf/quatd.h>
 #include <pxr/base/gf/quatf.h>
@@ -347,6 +348,7 @@ void author_nodes(const UsdStageRefPtr &stage, const UsdPrim &parent, SEXP nodes
 
 extern "C" SEXP libopenusd_write_stage_R(SEXP document, SEXP filename) {
     BEGIN_RCPP
+    LibOpenUsdOperation scope;
     const std::string path = string_value(filename);
     pxr::TfErrorMark errors;
     try {
@@ -383,6 +385,7 @@ extern "C" SEXP libopenusd_write_stage_R(SEXP document, SEXP filename) {
             throw std::runtime_error(message.str());
         }
         if (!errors.IsClean()) Rcpp::stop("USD stage export failed.");
+        LibOpenUsdCheckFailure();
         return R_NilValue;
     } catch (const std::exception &error) {
         std::string message = error.what();

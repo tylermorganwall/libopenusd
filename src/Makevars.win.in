@@ -1,11 +1,17 @@
-# CMake owns compilation/linking; R owns installation of the resulting DLL.
-# With OBJECTS empty, R's default shared-library recipe is a no-op.
-OBJECTS =
+# R compiles the package sources and links its shared library using these flags.
 CMAKE = @CMAKE@
-all: native-library
-.PHONY: native-library
-native-library:
-	"$(CMAKE)" --build build --target libopenusd --parallel @JOBS@
+PKG_CPPFLAGS = -DPXR_STATIC -I../inst/include -Ibuild/OpenUSD/include -I@TBB_INCLUDE@
+PKG_LIBS = @OPENUSD_LIBS@ @TBB_LIBS@ @PLATFORM_LIBS@
+
+all: $(SHLIB)
+
+# OpenUSD creates headers as well as its archive. Finish the vendored build
+# before R compiles any interface object, including with parallel make.
+$(OBJECTS): build/openusd-built
+$(SHLIB): build/openusd-built
+
+build/openusd-built: ../tools/vendor/cmake/CMakeLists.txt build/Makefile ../tools/install-resources.R
+	"$(CMAKE)" --build build --target usd_m --parallel @JOBS@
 	"$(CMAKE)" --install build --config Release > build/install.log
 	"$(R_HOME)/bin@R_ARCH_BIN@/@RSCRIPT@" ../tools/install-resources.R
-	cp "build/libopenusd@SUFFIX@" "$(SHLIB)"
+	touch $@

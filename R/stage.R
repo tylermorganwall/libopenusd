@@ -100,3 +100,21 @@ usd_close = function(stage) {
 usd_version = function() {
   .Call(C_libopenusd_version_R)
 }
+
+#' Read Buffered OpenUSD Diagnostics
+#'
+#' Retrieve native library messages to investigate warnings and debug output
+#' produced while reading or writing scenes.
+#'
+#' @return A character vector of buffered messages, clearing those messages
+#'   from the queue. Returns `character(0)` when no messages are pending.
+#' @export
+#' @details
+#' Messages from native workers are collected without calling R on those threads.
+#' The queue holds 128 messages of up to 2047 bytes each and reports overflow.
+#' @examples
+#' # Inspect any diagnostics from earlier scene operations.
+#' usd_messages()
+usd_messages = function() {
+  .Call(C_libopenusd_messages_R)
+}

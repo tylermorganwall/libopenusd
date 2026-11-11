@@ -1,7 +1,7 @@
 Package: libopenusd
 Type: Package
 Title: 'OpenUSD' Scene Description Import and Export
-Version: 26.8-3
+Version: 26.8-0
 Authors@R: c(
     person("Tyler", "Morgan-Wall", email = "tylermw@gmail.com",
         role = c("aut", "cre"),
@@ -14,6 +14,8 @@ Description: Provides the 'OpenUSD' 'C++' library for reading, composing,
     native interface for rendering packages.
 License: file LICENSE
 Copyright: file inst/COPYRIGHTS
+URL: https://github.com/tylermorganwall/libopenusd
+BugReports: https://github.com/tylermorganwall/libopenusd/issues
 Depends: R (>= 4.3.0)
 Imports: RcppParallel, Rcpp
 LinkingTo: Rcpp

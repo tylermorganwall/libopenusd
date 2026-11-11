@@ -1,4 +1,5 @@
 #include "bridge.h"
+#include "operation.h"
 #include <pxr/pxr.h>
 #include <pxr/base/plug/registry.h>
 #include <pxr/base/tf/errorMark.h>
@@ -27,9 +28,11 @@ template <typename Operation>
 int usd_call(Operation operation) noexcept {
     last_error.clear();
     try {
+        LibOpenUsdOperation scope;
         pxr::TfErrorMark errors;
         try {
             operation();
+            LibOpenUsdCheckFailure();
             if (!errors.IsClean()) {
                 throw std::runtime_error("OpenUSD reported an error.");
             }
@@ -124,7 +127,11 @@ char *stage_to_usda(libopenusd_stage *handle, int flatten) {
     return result;
 }
 
-void release_stage(libopenusd_stage *stage) { delete stage; }
+void release_stage(libopenusd_stage *stage) {
+    try { delete stage; }
+    catch (const std::exception& error) { LibOpenUsdRecordFailure(error.what()); }
+    catch (...) { LibOpenUsdRecordFailure("OpenUSD stage cleanup failed."); }
+}
 void free_string(char *text) { std::free(text); }
 
 const libopenusd_api_v1 api = {
