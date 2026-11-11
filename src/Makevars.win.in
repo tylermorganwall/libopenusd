@@ -1,6 +1,6 @@
 # R compiles the package sources and links its shared library using these flags.
 CMAKE = @CMAKE@
-PKG_CPPFLAGS = -DPXR_STATIC -I../inst/include -Ibuild/OpenUSD/include -I@TBB_INCLUDE@
+PKG_CPPFLAGS = @RCPP_FLAGS@ -DPXR_STATIC -I../inst/include -Ibuild/OpenUSD/include -I@TBB_INCLUDE@
 PKG_LIBS = @OPENUSD_LIBS@ @TBB_LIBS@ @PLATFORM_LIBS@
 
 all: $(SHLIB)

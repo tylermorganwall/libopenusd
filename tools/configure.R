@@ -373,7 +373,11 @@ writeLines(source_digest, source_stamp)
 # Rtools provides GNU make and a Unix shell, just like R's package build.
 # MinGW Makefiles instead searches for mingw32-make, absent on win-builder.
 generator = "Unix Makefiles"
-# CMake caches bind to both their source directory and generator.
+# Keep R's complete compiler commands, including wrappers, quoted paths and
+# standard-library flags. CMake parses CC/CXX itself on first configuration.
+compiler_commands = c(CC = r_config("CC"), CXX = r_config("CXX"))
+compiler_stamp = "src/build/libopenusd-compilers.txt"
+# CMake caches bind to their source directory, generator and compiler commands.
 cache_path = "src/build/CMakeCache.txt"
 if (file.exists(cache_path)) {
   cache = readLines(cache_path, warn = FALSE)
@@ -388,8 +392,16 @@ if (file.exists(cache_path)) {
     grep("^CMAKE_GENERATOR:INTERNAL=", cache, value = TRUE)
   )
   if (
-    !identical(cache_home, build_source_dir) ||
-      !identical(cache_generator, generator)
+    !identical(
+      normalizePath(cache_home, winslash = "/", mustWork = FALSE),
+      build_source_dir
+    ) ||
+      !identical(cache_generator, generator) ||
+      !file.exists(compiler_stamp) ||
+      !identical(
+        readLines(compiler_stamp, warn = FALSE),
+        unname(compiler_commands)
+      )
   ) {
     unlink(c("src/build", "src/usd-install", "inst/usd"), recursive = TRUE)
   }
@@ -422,10 +434,6 @@ if (length(tbb_candidates) != 1L || !file.exists(tbb_candidates)) {
 tbb_candidates = normalizePath(tbb_candidates, winslash = "/", mustWork = TRUE)
 message("Using TBB: ", tbb_candidates)
 
-# R's compiler setting can include architecture flags. Pass the executable and
-# flags separately to CMake; system2 quoting below preserves spaces in paths.
-cxx = strsplit(r_config("CXX"), "[[:space:]]+")[[1L]]
-cc = strsplit(r_config("CC"), "[[:space:]]+")[[1L]]
 build_args = c(
   "-S",
   build_source_dir,
@@ -472,18 +480,16 @@ build_args = c(
   "-DPXR_FIND_TBB_IN_CONFIG=OFF",
   "-DPXR_SET_INTERNAL_NAMESPACE=libopenusd_v26_08",
   "-DPXR_OVERRIDE_PLUGINPATH_NAME=LIBOPENUSD_PLUGIN_PATH",
-  paste0("-DCMAKE_CXX_COMPILER=", cxx[1L]),
-  paste0("-DCMAKE_C_COMPILER=", cc[1L]),
   paste0(
     "-DCMAKE_CXX_FLAGS=",
     paste(
-      c(cxx[-1L], r_config("CXXFLAGS"), r_config("CPPFLAGS")),
+      c(r_config("CXXFLAGS"), r_config("CPPFLAGS")),
       collapse = " "
     )
   ),
   paste0(
     "-DCMAKE_C_FLAGS=",
-    paste(c(cc[-1L], r_config("CFLAGS"), r_config("CPPFLAGS")), collapse = " ")
+    paste(c(r_config("CFLAGS"), r_config("CPPFLAGS")), collapse = " ")
   ),
   # Nested builds must also disable C/C++ assertions in installed R packages.
   "-DCMAKE_CXX_FLAGS_RELEASE=-DNDEBUG",
@@ -510,10 +516,29 @@ if (windows) {
     paste0("-DTBB_tbb_SHARED_LIBRARY_RELEASE=", tbb_candidates)
   )
 }
-status = system2(cmake, shQuote(build_args))
+# Set the environment directly so command quoting reaches CMake unchanged on
+# Windows as well as Unix. Restore it even when configuration fails.
+previous_compilers = Sys.getenv(names(compiler_commands), unset = NA_character_)
+for (name in names(compiler_commands)) {
+  message("Using ", name, ": ", compiler_commands[[name]])
+}
+do.call(Sys.setenv, as.list(compiler_commands))
+status = tryCatch(
+  system2(cmake, shQuote(build_args)),
+  finally = {
+    Sys.unsetenv(names(previous_compilers)[is.na(previous_compilers)])
+    if (any(!is.na(previous_compilers))) {
+      do.call(
+        Sys.setenv,
+        as.list(previous_compilers[!is.na(previous_compilers)])
+      )
+    }
+  }
+)
 if (status != 0L) {
   stop("OpenUSD CMake configuration failed.")
 }
+writeLines(unname(compiler_commands), compiler_stamp)
 
 jobs = Sys.getenv("LIBOPENUSD_JOBS", "2")
 if (!grepl("^[1-9][0-9]*$", jobs)) {
@@ -532,7 +557,7 @@ if (Sys.info()[["sysname"]] == "Darwin") {
     "-Wl,--no-whole-archive"
   )
   platform_libs = if (windows) {
-    "exports.def -lws2_32 -ldbghelp"
+    "exports.def -lws2_32 -ldbghelp -lshlwapi"
   } else {
     "-ldl -pthread -lm"
   }
@@ -550,6 +575,10 @@ replacements = c(
   CMAKE = cmake,
   JOBS = jobs,
   OPENUSD_LIBS = openusd_libs,
+  # Rcpp's optional exception demangler passes std::string across DLLs.
+  # R-hub may build Rcpp with libstdc++ and this package with libc++, so use
+  # portable exception messages without that ABI-dependent metadata path.
+  RCPP_FLAGS = "-DRCPP_DEMANGLER_ENABLED=0 -DRCPP_NO_RTTI",
   TBB_INCLUDE = shQuote(tbb_include),
   TBB_LIBS = tbb_libs,
   PLATFORM_LIBS = platform_libs,

@@ -106,3 +106,10 @@ int32 bounds, so rounding INT32_MAX up to 2^31 cannot permit an out-of-range cas
 Singular tasks store nullary callables directly instead of passing them through
 `std::bind`, avoiding libstdc++'s deprecated `result_of` path on Intel compilers.
 Tasks with bound arguments retain their existing binding behavior.
+
+Registry callbacks use signature-correct adapters rather than invoking cast
+function pointers. Trace list nodes use C++17 aligned new/delete to honor their
+full alignment even when it exceeds TBB's cache-line allocation alignment.
+Mapped zero-byte crate reads return before pointer arithmetic or memcpy, and
+crate spec records initialize their enum before robin-map insertion can swap it.
+Oversized VtArray allocations throw before passing an impossible size to new.

@@ -7457,7 +7457,15 @@
                      setting, kb);
          }
          return kb;
-@@ -775,7 +777,7 @@
+@@ -622,6 +624,7 @@
+     }
+ 
+     inline void Read(void *dest, size_t nBytes) {
++        if (nBytes == 0) return;
+         char const *mapStart = _mapping->GetMapStart();
+         size_t mapLen = _mapping->GetLength();
+         _ThrowIfReadOutOfRange(
+@@ -775,7 +778,7 @@
          if constexpr (SafetyOverSpeed) {
              if (nRead != nBytes) {
                  PXR_TF_THROW(SdfReadOutOfBoundsError, TfStringPrintf(
@@ -7466,7 +7474,7 @@
                               nBytes, _cur));
              }
          }
-@@ -1221,7 +1223,7 @@
+@@ -1221,7 +1224,7 @@
      template <class T>
      inline T Read() {
          if constexpr (_IsBitwiseReadWrite<T>::value) {
@@ -7475,7 +7483,7 @@
              src.Read(&bits, sizeof(bits));
              return bits;
          }
-@@ -2000,7 +2002,10 @@
+@@ -2000,7 +2003,10 @@
      auto isIntegral = [](T fp) {
          constexpr int32_t max = std::numeric_limits<int32_t>::max();
          constexpr int32_t min = std::numeric_limits<int32_t>::lowest();
@@ -7487,7 +7495,7 @@
              static_cast<T>(static_cast<int32_t>(fp)) == fp;
      };    
      if (std::all_of(array.cdata(), array.cdata() + array.size(), isIntegral)) {
-@@ -2626,7 +2631,7 @@
+@@ -2626,7 +2632,7 @@
  
          std::lock_guard<std::mutex> lock(outputMutex);
  
@@ -7496,7 +7504,7 @@
                 ">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>\n"
                 "page map for %s\n"
                 "%" PRId64 " pages, %" PRId64 " used (%.1f%%), %" PRId64
-@@ -2645,13 +2650,13 @@
+@@ -2645,13 +2651,13 @@
          constexpr int wrapCol = 80;
          int col = 0;
          for (int64_t i = 0; i != npages; ++i, ++col) {
@@ -7513,7 +7521,7 @@
                 "<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<\n");
      }
  
-@@ -3826,7 +3831,7 @@
+@@ -3826,7 +3832,7 @@
      wd.Wait();
      if (i != numTokens) {
          TF_RUNTIME_ERROR("Crate file claims %zu tokens, found %zu",
@@ -8818,6 +8826,15 @@
          dupeTokenSet->clear();
  
          const TfTokenVector& children = val.UncheckedGet<TfTokenVector>();
+@@ -1171,7 +1172,7 @@
+         }
+         
+         Sdf_Shared<_FieldValuePairVector> fields;
+-        SdfSpecType specType;
++        SdfSpecType specType = SdfSpecTypeUnknown;
+     };
+ 
+     using _HashMap = pxr_tsl::robin_map<
 --- a/pxr/usd/sdf/pathExpressionEval.cpp
 +++ b/pxr/usd/sdf/pathExpressionEval.cpp
 @@ -1,3 +1,4 @@
@@ -10099,7 +10116,28 @@
  //
  // Copyright 2016 Pixar
  //
-@@ -145,7 +146,7 @@
+@@ -125,12 +126,15 @@
+     TF_API static void Add(const char* libName,
+                     TfRegistryManager::RegistryFunctionType func,
+                     const char* typeName);
+-    template <class T, class U>
+-    static void Add(const char* libName,
+-                    void (*func)(T*, U*),
+-                    const char* typeName)
++    template <class T, class U, void (*Function)(T*, U*)>
++    static void Add(const char* libName, const char* typeName)
+     {
+-        Add(libName,(TfRegistryManager::RegistryFunctionType)func,typeName);
++        // Keep a real function-pointer entry point for library discovery, but
++        // invoke the typed callback through an adapter with the exact erased
++        // signature. Casting and calling the original pointer is undefined.
++        Add(libName, [](void* first, void* second) {
++            Function(static_cast<T*>(first), static_cast<U*>(second));
++        }, typeName);
+     }
+ };
+ 
+@@ -145,12 +149,13 @@
  // the body of the function inside braces.  KEY_TYPE and TAG must be types.
  #define TF_REGISTRY_DEFINE_WITH_TYPE(KEY_TYPE, TAG)                            \
      static void _Tf_RegistryFunction(KEY_TYPE*, TAG*);                         \
@@ -10107,17 +10145,35 @@
 +    ARCH_CONSTRUCTOR(TF_PP_CAT(_Tf_RegistryAdd, __LINE__),                  \
                       TF_REGISTRY_PRIORITY)                                     \
      {                                                                          \
-         Tf_RegistryInit::Add(TF_PP_STRINGIZE(MFB_ALT_PACKAGE_NAME),            \
-@@ -167,7 +168,7 @@
-                              TF_PP_CAT(_Tf_RegistryFunction, NAME),            \
-                              TF_PP_STRINGIZE(KEY_TYPE));                       \
+-        Tf_RegistryInit::Add(TF_PP_STRINGIZE(MFB_ALT_PACKAGE_NAME),            \
+-                             (void(*)(KEY_TYPE*, TAG*))_Tf_RegistryFunction,   \
+-                             TF_PP_STRINGIZE(KEY_TYPE));                       \
++        Tf_RegistryInit::Add<KEY_TYPE, TAG,                                 \
++            static_cast<void(*)(KEY_TYPE*, TAG*)>(_Tf_RegistryFunction)>(    \
++                TF_PP_STRINGIZE(MFB_ALT_PACKAGE_NAME),                     \
++                TF_PP_STRINGIZE(KEY_TYPE));                       \
+     }                                                                          \
+     _ARCH_ENSURE_PER_LIB_INIT(Tf_RegistryStaticInit, _tfRegistryInit);         \
+     static void _Tf_RegistryFunction(KEY_TYPE*, TAG*)
+@@ -162,12 +167,12 @@
+     static void TF_PP_CAT(_Tf_RegistryFunction, NAME)(KEY_TYPE*, void*);       \
+     ARCH_CONSTRUCTOR(TF_PP_CAT(_Tf_RegistryAdd, NAME), TF_REGISTRY_PRIORITY)   \
+     {                                                                          \
+-        Tf_RegistryInit::Add(TF_PP_STRINGIZE(MFB_ALT_PACKAGE_NAME),            \
+-                             (void(*)(KEY_TYPE*, void*))                       \
+-                             TF_PP_CAT(_Tf_RegistryFunction, NAME),            \
+-                             TF_PP_STRINGIZE(KEY_TYPE));                       \
++        Tf_RegistryInit::Add<KEY_TYPE, void,                                \
++            TF_PP_CAT(_Tf_RegistryFunction, NAME)>(                          \
++                TF_PP_STRINGIZE(MFB_ALT_PACKAGE_NAME),                     \
++                TF_PP_STRINGIZE(KEY_TYPE));                       \
      }                                                                          \
 -    _ARCH_ENSURE_PER_LIB_INIT(Tf_RegistryStaticInit, _tfRegistryInit);         \
 +    _ARCH_ENSURE_PER_LIB_INIT(Tf_RegistryStaticInit, TF_PP_CAT(_tfRegistryInit, NAME));         \
      static void TF_PP_CAT(_Tf_RegistryFunction, NAME)(KEY_TYPE*, void*)
  
  
-@@ -199,7 +200,7 @@
+@@ -199,7 +204,7 @@
  ///
  /// \hideinitializer
  #define TF_REGISTRY_FUNCTION(KEY_TYPE) \
@@ -10126,7 +10182,7 @@
  
  /// Define a function that is called on demand by \c TfRegistryManager.
  ///
-@@ -240,7 +241,7 @@
+@@ -240,7 +245,7 @@
  ///
  /// \hideinitializer
  #define TF_REGISTRY_FUNCTION_WITH_TAG(KEY_TYPE, TAG) \
@@ -10171,3 +10227,75 @@
                                           std::forward<Args>(args)...)))
          , _count(0) {}
  
+--- a/pxr/base/trace/concurrentList.h
++++ b/pxr/base/trace/concurrentList.h
+@@ -1,3 +1,4 @@
++// Modified for libopenusd by Tyler Morgan-Wall, 2026: R embedding; see tools/vendor/README.md.
+ //
+ // Copyright 2018 Pixar
+ //
+@@ -12,7 +13,6 @@
+ 
+ #include "pxr/base/arch/align.h"
+ 
+-#include <tbb/cache_aligned_allocator.h>
+ 
+ #include <atomic>
+ #include <iterator>
+@@ -94,8 +94,7 @@
+         while (curNode) {
+             Node* nodeToDelete = curNode;
+             curNode = curNode->next;
+-            nodeToDelete->~Node();
+-            _alloc.deallocate(nodeToDelete, 1);
++            delete nodeToDelete;
+         }
+     }
+ 
+@@ -112,8 +111,9 @@
+     /// Inserts an item at the beginning of the list and returns an iterator to
+     /// the newly created item.
+     iterator Insert() {
+-        Node* newNode = _alloc.allocate(1);
+-        new(newNode) Node();
++        // C++17 aligned new honors Node's full alignment, which may exceed
++        // the cache-line alignment provided by TBB on this architecture.
++        Node* newNode = new Node();
+ 
+         // Add the node to the linked list in an atomic manner.
+         do {
+@@ -124,7 +124,6 @@
+ 
+ private:
+     std::atomic<Node*> _head;
+-    tbb::cache_aligned_allocator<Node> _alloc;
+ };
+ 
+ PXR_NAMESPACE_CLOSE_SCOPE
+--- a/pxr/base/vt/array.h
++++ b/pxr/base/vt/array.h
+@@ -1,3 +1,4 @@
++// Modified for libopenusd by Tyler Morgan-Wall, 2026: R embedding; see tools/vendor/README.md.
+ //
+ // Copyright 2016 Pixar
+ //
+@@ -1036,13 +1037,12 @@
+ 
+     value_type *_AllocateNew(size_t capacity) {
+         TfAutoMallocTag2 tag("VtArray::_AllocateNew", __ARCH_PRETTY_FUNCTION__);
+-        // Need space for the control block and capacity elements.
+-        // Exceptionally large capacity requests can overflow the arithmetic
+-        // here.  If that happens we'll just attempt to allocate the max size_t
+-        // value and let new() throw.
+-        size_t numBytes = (capacity <= max_size())
+-            ? sizeof(_ControlBlock) + capacity * sizeof(value_type)
+-            : std::numeric_limits<size_t>::max();
++        // Reject impossible sizes before arithmetic or allocation. Asking
++        // operator new for SIZE_MAX instead triggers LTO allocation warnings.
++        if (capacity > max_size()) {
++            throw std::bad_array_new_length();
++        }
++        const size_t numBytes = sizeof(_ControlBlock) + capacity * sizeof(value_type);
+         void *data = ::operator new(numBytes);
+         // Placement-new a control block.
+         ::new (data) _ControlBlock(/*count=*/1, capacity);

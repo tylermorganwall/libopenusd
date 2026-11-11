@@ -31,7 +31,9 @@
   compilation defaults.
 - Overall: Uses R's standard compilation and linking rules for the package shared
   library, with CMake confined to the vendored OpenUSD build. Configuration and
-  source preparation run through `tools/configure.R` without Python.
+  source preparation run through `tools/configure.R` without Python. Preserves
+  R's full compiler commands, including wrappers and standard-library flags,
+  and refreshes the vendored build when compiler commands change.
 - Overall: Reduces the bundled sources by removing unused imaging/viewer code,
   upstream tests, tutorials, Python bindings, and documentation assets while
   preserving native scene-data functionality.
@@ -46,3 +48,8 @@
   standard-library binding path when scheduling tasks without arguments.
 - Overall: Prevents out-of-range integer conversions when compressing floating-point
   arrays near the 32-bit integer limits.
+- Overall: Fixes sanitizer errors in callback dispatch, trace-node alignment,
+  empty crate reads, and crate spec initialization. Rejects oversized native
+  arrays before allocation.
+- Overall: Links Windows path utilities and keeps invalid-input errors safe when
+  Rcpp and the package use different C++ standard libraries.

@@ -135,4 +135,18 @@ usd_close(stage)
 unlink(path)
 stopifnot(identical(actual, expected))
 
+# Empty arrays and enough specs to exercise crate-map growth must round-trip.
+source = paste0(
+  '#usda 1.0\ndef Scope "Empty" {\n int[] integers = []\n float[] values = []\n}\n',
+  paste(sprintf('def Scope "Node%d" {}', seq_len(256L)), collapse = "\n")
+)
+stage = usd_from_usda(source)
+expected = usd_to_usda(stage)
+path = file.path(workspace, "empty-arrays.usdc")
+usd_export(stage, path)
+restored = usd_open(path)
+stopifnot(identical(usd_to_usda(restored), expected))
+usd_close(restored)
+usd_close(stage)
+
 unlink(workspace, recursive = TRUE)
