@@ -224,13 +224,61 @@ prune_openusd_sources = function(source_dir) {
   )
 }
 
+#' @param source_dir Directory containing generated native build products.
+#' @return Paths whose CRLF line endings were converted to LF.
+#' @keywords internal
+normalize_build_line_endings = function(source_dir) {
+  files = c(
+    list.files(
+      file.path(source_dir, c("build", "usd-install")),
+      recursive = TRUE,
+      full.names = TRUE,
+      all.files = TRUE,
+      no.. = TRUE
+    ),
+    file.path(source_dir, c("Makevars", "Makevars.win"))
+  )
+  files = files[
+    file.exists(files) &
+      grepl(
+        "^(Makefile|Makevars([.]win)?)$|[.](make|mk|c|cc|cpp|cxx|h|hh|hpp|hxx|f|for|f90|f95)$",
+        basename(files),
+        ignore.case = TRUE
+      )
+  ]
+  changed = character()
+  for (path in files) {
+    info = file.info(path)
+    bytes = readBin(path, "raw", n = info$size)
+    if (length(bytes) < 2L || any(bytes == as.raw(0))) {
+      next
+    }
+    crlf = which(
+      bytes[-length(bytes)] == as.raw(13) & bytes[-1L] == as.raw(10)
+    )
+    if (!length(crlf)) {
+      next
+    }
+    writeBin(bytes[-crlf], path)
+    # Only newline encoding changes. Preserve dependency timestamps so this
+    # portability step does not trigger recompilation of every copied header.
+    Sys.setFileTime(path, info$mtime)
+    changed = c(changed, path)
+  }
+  invisible(changed)
+}
+
 # Maintainers recreate the trimmed archive using R alone. Ordinary installation
 # continues with configuration below; no archive is rewritten during install.
 arguments = commandArgs(trailingOnly = TRUE)
+if (length(arguments) == 2L && arguments[1L] == "--normalize-build") {
+  normalize_build_line_endings(arguments[2L])
+  quit(status = 0L)
+}
 if (length(arguments)) {
   if (length(arguments) != 3L || arguments[1L] != "--prune-vendor") {
     stop(
-      "Usage: Rscript tools/configure.R [--prune-vendor INPUT.tar.xz OUTPUT.tar.xz]"
+      "Usage: Rscript tools/configure.R [--prune-vendor INPUT.tar.xz OUTPUT.tar.xz | --normalize-build SRC]"
     )
   }
   prepare_openusd_archive(arguments[2L], arguments[3L])
@@ -594,3 +642,6 @@ for (key in names(replacements)) {
   )
 }
 writeLines(template, if (windows) "src/Makevars.win" else "src/Makevars")
+# CMake emits platform-native line endings, including its compiler probes and
+# Makefiles. Repeat after the build to cover headers copied by custom commands.
+normalize_build_line_endings("src")

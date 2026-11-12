@@ -59,3 +59,5 @@
 - Overall: Tracks native array allocations from their starting address, preserving
   copy-on-write ownership and avoiding ambiguous Valgrind leak reports for cached
   schema arrays.
+- Overall: Uses LF line endings for generated build text on Windows and runs
+  the diagnostic subprocess test with a portable environment and script file.

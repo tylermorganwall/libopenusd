@@ -26,7 +26,16 @@ local({
   # TF_DEBUG=help formerly called exit(0) while loading the DLL. Verify the
   # child reaches a marker after loading and retrieves help through the queue.
   error_file = tempfile()
-  on.exit(unlink(error_file))
+  script_file = tempfile(fileext = ".R")
+  previous_tests = Sys.getenv("R_TESTS", unset = NA_character_)
+  on.exit({
+    unlink(c(error_file, script_file))
+    if (is.na(previous_tests)) {
+      Sys.unsetenv("R_TESTS")
+    } else {
+      Sys.setenv(R_TESTS = previous_tests)
+    }
+  })
   expression = paste0(
     ".libPaths(",
     paste(deparse(.libPaths()), collapse = ""),
@@ -35,10 +44,17 @@ local({
     "stopifnot(any(grepl('TF_DEBUG', usd_messages(), fixed = TRUE))); ",
     "stopifnot(identical(usd_messages(), character())); cat('alive\n')"
   )
+  writeLines(expression, script_file)
+  # Windows system2(env=) puts assignments on the command line; Rscript
+  # treats them as script names. Set the inherited environment explicitly.
+  # A script file also avoids platform-dependent quoting of an R expression.
+  Sys.unsetenv("R_TESTS")
   result = system2(
-    file.path(R.home("bin"), "Rscript"),
-    c("--vanilla", "-e", shQuote(expression)),
-    env = "R_TESTS=",
+    file.path(
+      R.home("bin"),
+      if (.Platform$OS.type == "windows") "Rscript.exe" else "Rscript"
+    ),
+    c("--vanilla", shQuote(script_file)),
     stdout = TRUE,
     stderr = error_file
   )
