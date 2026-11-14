@@ -8,6 +8,11 @@ a renderer remains responsible for translating its scene model to and from USD.
 
 Source installation requires CMake 3.22 or newer and R's native compiler toolchain.
 
+```r
+install.packages("remotes")
+remotes::install_github("tylermorganwall/libopenusd")
+```
+
 ## R interface
 
 ```r
@@ -37,28 +42,84 @@ Stage handles are process-local and must not be persisted with `saveRDS()`.
 `usd_inspect()` reads typed custom data, selected default-time attributes, and
 child paths.
 
-## Registered native interface
+## Registered native interface (package developers only)
 
-Consumer packages declare:
+This section is for developers adding USD support to an R package.
+
+Downstream packages declare:
 
 ```
 Imports: libopenusd
 LinkingTo: libopenusd
 ```
 
-Load the namespace before retrieving the table, for example with
-`importFrom(libopenusd, usd_version)` in NAMESPACE. Then, on R's main thread:
+For a downstream package named `usdexample`, add these entries to `NAMESPACE`:
 
-```cpp
+```
+importFrom(libopenusd, usd_version)
+useDynLib(usdexample, .registration = TRUE, .fixes = "C_")
+```
+
+Save the following C code as `src/scene.c`. It opens a 3D scene as a USD stage
+and returns a handle to R. The finalizer releases the stage when R collects
+the handle.
+
+```c
 #include <libopenusd.h>
+#include <R_ext/Visibility.h>
 
-const libopenusd_api_v1 *usd = libopenusd_get_api();
-libopenusd_stage *stage = usd->stage_open("scene.usdc");
-if (!stage) {
-    // Copy/report usd->last_error() using the consumer's error handling.
+static const libopenusd_api_v1 *usd = NULL;
+
+static void release_scene(SEXP handle)
+{
+    libopenusd_stage *stage = R_ExternalPtrAddr(handle);
+    if (stage != NULL) {
+        usd->stage_release(stage);
+        R_ClearExternalPtr(handle);
+    }
 }
-// Use stage_export() or stage_to_usda(), then:
-usd->stage_release(stage);
+
+SEXP load_usd_scene(SEXP filename)
+{
+    if (TYPEOF(filename) != STRSXP || XLENGTH(filename) != 1 ||
+        STRING_ELT(filename, 0) == NA_STRING) {
+        Rf_error("filename must be a single, non-missing string");
+    }
+    usd = libopenusd_get_api();
+
+    /* Set up cleanup before opening the scene. */
+    SEXP handle = PROTECT(R_MakeExternalPtr(NULL, R_NilValue, R_NilValue));
+    R_RegisterCFinalizerEx(handle, release_scene, TRUE);
+
+    libopenusd_stage *stage = usd->stage_open(
+        Rf_translateCharUTF8(STRING_ELT(filename, 0)));
+    if (stage == NULL) {
+        Rf_error("Cannot load USD scene: %s", usd->last_error());
+    }
+    R_SetExternalPtrAddr(handle, stage);
+    UNPROTECT(1);
+    return handle;
+}
+
+static const R_CallMethodDef call_methods[] = {
+    {"load_usd_scene", (DL_FUNC) &load_usd_scene, 1},
+    {NULL, NULL, 0}
+};
+
+void attribute_visible R_init_usdexample(DllInfo *dll)
+{
+    R_registerRoutines(dll, NULL, call_methods, NULL, NULL);
+    R_useDynamicSymbols(dll, FALSE);
+    R_forceSymbols(dll, TRUE);
+}
+```
+
+After installing `usdexample`, load the `scene.usdc` file created in the R
+example above:
+
+```r
+library(usdexample)
+scene = .Call(usdexample:::C_load_usd_scene, normalizePath("scene.usdc"))
 ```
 
 `libopenusd_get_api()` resolves the registered symbol
@@ -73,14 +134,14 @@ After namespace loading/table acquisition on R's main thread, table operations
 can run on native worker threads. Concurrent writes to the same stage are not
 supported. The full contract is in `inst/include/libopenusd/api.h`.
 
-Native R consumers can call `libopenusd_inspect()` from the installed
+Downstream R packages can call `libopenusd_inspect()` from the installed
 `libopenusd.h` header after loading the namespace. This registered
 `libopenusd_inspect_v1` interface uses R objects and runs on R's main thread.
 Unsupported metadata types report an error instead of being silently converted.
 
 ## Typed stage authoring
 
-Native R consumers can call `libopenusd_write_stage(document, filename)` from
+Downstream R packages can call `libopenusd_write_stage(document, filename)` from
 `libopenusd.h` after loading the namespace. The registered
 `libopenusd_write_stage_v1` entry point accepts R objects on R's main thread.
 It constructs a stage through OpenUSD and exports the requested file format.
