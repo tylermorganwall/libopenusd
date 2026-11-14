@@ -15,6 +15,8 @@ jobs:
     name: Build and verify source tarball
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    outputs:
+      artifact-id: ${{ steps.artifact.outputs.artifact-id }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -118,7 +120,9 @@ jobs:
           sparse-checkout: .github/scripts
       - uses: actions/download-artifact@v4
         with:
-          name: r-source-${{ github.run_id }}-${{ github.run_attempt }}
+          # Reuse the successful build artifact when only publication is retried.
+          artifact-ids: ${{ needs.build.outputs.artifact-id }}
+          merge-multiple: true
           path: source-output
       - uses: actions/github-script@v7
         with:
