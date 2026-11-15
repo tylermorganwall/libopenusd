@@ -1,8 +1,8 @@
 R wrapper and registered native interface: Copyright 2026 Tyler Morgan-Wall.
 Distributed under the Tomorrow Open Source Technology License 1.0 in LICENSE.
-
+w
 OpenUSD 26.08: Copyright Pixar and upstream contributors.
 The vendored distribution retains its license, notice, and source notices.
 The package-root LICENSE includes the Tomorrow Open Source Technology License
-1.0 and the upstream third-party component notices.
+1.0 and third-party notices applicable to the bundled source.
 The upstream notice is installed in licenses/OpenUSD-NOTICE.txt.

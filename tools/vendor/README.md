@@ -1,7 +1,7 @@
 # OpenUSD source
 
 `OpenUSD-26.08.tar.xz` contains Pixar OpenUSD v26.08, with the local R embedding
-changes recorded in `cran-portability.patch`. Original copyright and license
+changes recorded in `cran-portability.patch`. Applicable copyright and license
 notices are retained. The patch is already applied in the archive: clean builds
 must use this archive, not a previous unpatched `src/OpenUSD` extraction.
 
@@ -41,6 +41,13 @@ size formats such as `%zu` are recognized without disabling compiler warnings.
 
 ## Native-only source bundle
 
+The package-root `LICENSE` and archive's `LICENSE.txt` retain the main OpenUSD
+license and notices for included components. Notices for omitted components
+and RapidJSON's absent JSON_checker test data are removed. The maintainer-only
+portability patch is excluded from the R source package; the archive already
+contains the patched source. Patch entries for files absent from the source
+subset are omitted as well.
+
 The archive retains the core native USD libraries and their schema/plugin
 resources. It omits upstream tests, examples, tutorials, documentation artwork,
 imaging/viewer code, the disabled Exec and validation components, optional
@@ -53,6 +60,7 @@ Recreate this subset from a full OpenUSD 26.08 archive after applying
 `cran-portability.patch`, running from the R package root:
 
 ```sh
+# Before archiving, use the package-root LICENSE as the subset's LICENSE.txt.
 Rscript tools/configure.R --prune-vendor /path/to/patched-OpenUSD-26.08.tar.xz tools/vendor/OpenUSD-26.08.tar.xz
 ```
 

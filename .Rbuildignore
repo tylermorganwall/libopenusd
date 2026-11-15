@@ -22,3 +22,5 @@
 ^[.]vscode$
 ^tools/(?!configure[.]R$|install-resources[.]R$|vendor(?:/|$))
 ^tools/vendor/.*[.]removed[.]tsv$
+
+^tools/vendor/cran-portability[.]patch$
