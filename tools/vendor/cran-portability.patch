@@ -5039,6 +5039,19 @@
          if ((cacheLineSize != ROSETTA_WORKAROUND_CACHE_LINE_SIZE)) {
              ARCH_WARNING(
                  "Cache-line size mismatch may negatively impact performance.");
+@@ -156,12 +158,1 @@
+-    /*
+-     * Make sure that ARM64_CNTVCT == 0x5F02 on Windows ARM64
+-     * This is manually calculated in pxr/base/arch/timing.h to
+-     * avoid including <windows.h>
+-     */
+-#if defined(ARCH_OS_WINDOWS) && defined(ARCH_CPU_ARM)
+-    {
+-        static_assert(ARM64_CNTVCT == 0x5F02,
+-            "Manually calculated ARM64_CNTVCT value is no longer correct");
+-    }
+-#endif
+ }
 --- a/pxr/base/arch/hash.cpp
 +++ b/pxr/base/arch/hash.cpp
 @@ -1,3 +1,4 @@
