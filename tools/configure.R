@@ -424,6 +424,7 @@ generator = "Unix Makefiles"
 # Keep R's complete compiler commands, including wrappers, quoted paths and
 # standard-library flags. CMake parses CC/CXX itself on first configuration.
 compiler_commands = c(CC = r_config("CC"), CXX = r_config("CXX"))
+wasm = grepl("(^|[ /])emcc([[:space:]]|$)", compiler_commands[["CC"]])
 compiler_stamp = "src/build/libopenusd-compilers.txt"
 # CMake caches bind to their source directory, generator and compiler commands.
 cache_path = "src/build/CMakeCache.txt"
@@ -459,8 +460,26 @@ parallel_root = system.file(package = "RcppParallel", mustWork = TRUE)
 tbb_include = file.path(parallel_root, "include")
 # Select the runtime matching RcppParallel's headers, avoiding unrelated system
 # TBB installations. The provider package loads its runtime before our DLL.
-windows = .Platform$OS.type == "windows"
-if (windows) {
+windows = !wasm && .Platform$OS.type == "windows"
+if (wasm) {
+  # webR runs configure in host R. Its tbb32 pkg-config file identifies the
+  # target headers and archive, independent of the host RcppParallel runtime.
+  pkg_config = Sys.getenv("PKG_CONFIG", unname(Sys.which("pkg-config")))
+  parallel_root = system2(
+    pkg_config,
+    c("--variable=prefix", "tbb32"),
+    stdout = TRUE
+  )
+  if (
+    length(parallel_root) != 1L ||
+      !is.null(attr(parallel_root, "status")) ||
+      !nzchar(parallel_root)
+  ) {
+    stop("The Emscripten build requires the target tbb32 pkg-config module.")
+  }
+  tbb_include = file.path(parallel_root, "include")
+  tbb_candidates = file.path(parallel_root, "lib", "libtbb.a")
+} else if (windows) {
   # CRAN's Windows binary ships tbb.dll without an import archive. MinGW can
   # link directly to it. Use the provider's resolver to select the active R
   # architecture and the same runtime that RcppParallel loads.
@@ -547,7 +566,7 @@ build_args = c(
   paste0("-DTBB_INCLUDE_DIR=", tbb_include),
   paste0("-DTBB_tbb_LIBRARY_RELEASE=", tbb_candidates)
 )
-if (Sys.info()[["sysname"]] == "Darwin") {
+if (!wasm && Sys.info()[["sysname"]] == "Darwin") {
   build_args = c(
     build_args,
     paste0(
@@ -571,8 +590,21 @@ for (name in names(compiler_commands)) {
   message("Using ", name, ": ", compiler_commands[[name]])
 }
 do.call(Sys.setenv, as.list(compiler_commands))
+configure_command = cmake
+if (wasm) {
+  configure_command = unname(Sys.which("emcmake"))
+  if (!nzchar(configure_command)) {
+    stop("Cannot find emcmake for the Emscripten target.")
+  }
+  build_args = c(
+    cmake,
+    build_args,
+    paste0("-DTBB_INCLUDE_DIRS:PATH=", tbb_include),
+    "-DTBB_USE_STATIC_LIBS=ON"
+  )
+}
 status = tryCatch(
-  system2(cmake, shQuote(build_args)),
+  system2(configure_command, shQuote(build_args)),
   finally = {
     Sys.unsetenv(names(previous_compilers)[is.na(previous_compilers)])
     if (any(!is.na(previous_compilers))) {
@@ -595,7 +627,7 @@ if (!grepl("^[1-9][0-9]*$", jobs)) {
 # Static schema and file-format registrars must survive the final R link.
 # Apply whole-archive only to OpenUSD, not to TBB or the system libraries.
 openusd_archive = "build/OpenUSD/libusd_m.a"
-if (Sys.info()[["sysname"]] == "Darwin") {
+if (!wasm && Sys.info()[["sysname"]] == "Darwin") {
   openusd_libs = paste0("-Wl,-force_load,", openusd_archive)
   platform_libs = "-framework Foundation -lm"
 } else {
@@ -606,12 +638,14 @@ if (Sys.info()[["sysname"]] == "Darwin") {
   )
   platform_libs = if (windows) {
     "exports.def -lws2_32 -ldbghelp -lshlwapi"
+  } else if (wasm) {
+    "-lm"
   } else {
     "-ldl -pthread -lm"
   }
 }
 tbb_libs = shQuote(tbb_candidates)
-if (!windows) {
+if (!windows && !wasm) {
   tbb_libs = paste(
     tbb_libs,
     paste0("-Wl,-rpath,", shQuote(dirname(tbb_candidates)))

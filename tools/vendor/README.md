@@ -136,3 +136,7 @@ adds one pointer to the private array representation. It makes cached schema
 allocations reachable to Valgrind, which otherwise sees only pointers past the
 reference-count header and reports them as possibly lost. No leak suppressions or
 Valgrind-specific compilation modes are used. The package's public C API is unchanged.
+
+On WebAssembly the stack-frame fallback reports zero frames and executable-path
+lookup uses the upstream virtual path. File-advice diagnostics preserve 64-bit
+offsets on platforms with 32-bit pointers.

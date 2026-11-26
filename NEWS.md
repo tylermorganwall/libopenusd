@@ -2,6 +2,7 @@
 
 ## Bugfixes
 
+- WebAssembly source builds use the Emscripten CMake toolchain and target TBB library.
 - Windows ARM64 builds use the standard monotonic clock without requiring an unused Windows SDK register definition.
 
 # libopenusd 26.8-1
