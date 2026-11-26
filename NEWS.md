@@ -1,3 +1,9 @@
+# libopenusd 26.8-0.9000
+
+## Bugfixes
+
+- Windows source installs can start configuration when R leaves `R_ARCH_BIN` unset.
+
 # libopenusd 26.8-0
 
 - Overall: Provides OpenUSD 26.08 with registered R functions and a versioned
