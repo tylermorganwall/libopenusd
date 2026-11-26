@@ -1,4 +1,4 @@
-# libopenusd 26.8-0.9000
+# libopenusd 26.8-1
 
 ## Bugfixes
 
