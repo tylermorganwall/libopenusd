@@ -644,7 +644,9 @@ if (!wasm && Sys.info()[["sysname"]] == "Darwin") {
     "-ldl -pthread -lm"
   }
 }
-tbb_libs = shQuote(tbb_candidates)
+# webR resolves oneTBB from the RcppParallel module loaded by NAMESPACE.
+# Linking a second copy recurses during allocator initialization.
+tbb_libs = if (wasm) "" else shQuote(tbb_candidates)
 if (!windows && !wasm) {
   tbb_libs = paste(
     tbb_libs,

@@ -140,3 +140,9 @@ Valgrind-specific compilation modes are used. The package's public C API is unch
 On WebAssembly the stack-frame fallback reports zero frames and executable-path
 lookup uses the upstream virtual path. File-advice diagnostics preserve 64-bit
 offsets on platforms with 32-bit pointers.
+
+The webR build inherits R's target exception and threading flags and uses the
+oneTBB runtime already loaded by RcppParallel. The bundled shader registry is
+part of the monolithic archive on WebAssembly as it is on native platforms.
+Tetrahedral mesh faces use OpenUSD's tuple hash so vertex indices can be hashed
+on a 32-bit target.

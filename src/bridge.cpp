@@ -26,7 +26,9 @@ thread_local std::string last_error;
 // TfErrorMark prevents failed parsing from also printing uncaught errors to stderr.
 template <typename Operation>
 int usd_call(Operation operation) noexcept {
-    last_error.clear();
+    // Resolve thread-local storage before entering a WebAssembly catch handler.
+    std::string &message = last_error;
+    message.clear();
     try {
         LibOpenUsdOperation scope;
         pxr::TfErrorMark errors;
@@ -39,9 +41,9 @@ int usd_call(Operation operation) noexcept {
         } catch (const std::exception &error) {
             // Prefer OpenUSD's precise location/parse diagnostic to a generic
             // failure from a null stage or false return value.
-            last_error = error.what();
+            message = error.what();
             for (const auto &diagnostic : errors) {
-                last_error += "\n" + diagnostic.GetCommentary();
+                message += "\n" + diagnostic.GetCommentary();
             }
             errors.Clear();
             return 0;
@@ -51,9 +53,9 @@ int usd_call(Operation operation) noexcept {
         }
         return 1;
     } catch (const std::exception &error) {
-        last_error = error.what();
+        message = error.what();
     } catch (...) {
-        last_error = "Unknown OpenUSD exception.";
+        message = "Unknown OpenUSD exception.";
     }
     return 0;
 }

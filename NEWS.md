@@ -2,7 +2,8 @@
 
 ## Bugfixes
 
-- WebAssembly source builds use the Emscripten CMake toolchain and target TBB library.
+- WebAssembly source builds use webR's Emscripten toolchain and RcppParallel runtime.
+  Stages can be read, composed and written in webR, and malformed USD returns an R error.
 - Windows ARM64 builds use the standard monotonic clock without requiring an unused Windows SDK register definition.
 
 # libopenusd 26.8-1

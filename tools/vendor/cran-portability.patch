@@ -6495,3 +6495,44 @@
  
  std::string
  ArchGetExecutablePath()
+--- a/pxr/usd/usdGeom/tetMesh.cpp
++++ b/pxr/usd/usdGeom/tetMesh.cpp
+@@ -1,0 +1 @@
++// Modified for libopenusd: hash mesh vertex indices portably on 32-bit platforms.
+@@ -182,11 +182,0 @@
+-
+-struct _Vec3iHash
+-{
+-    size_t operator()(const GfVec3i& v) const
+-    {
+-        return
+-            static_cast<size_t>(v[0]) << 42 ^
+-            static_cast<size_t>(v[1]) << 21 ^
+-            static_cast<size_t>(v[2]);
+-    }
+-};
+@@ -232 +222 @@
+-        TfHashMap<GfVec3i, std::pair<size_t, GfVec3i>, _Vec3iHash>;
++        TfHashMap<GfVec3i, std::pair<size_t, GfVec3i>, TfHash>;
+--- a/pxr/usd/plugin/usdShaders/CMakeLists.txt
++++ b/pxr/usd/plugin/usdShaders/CMakeLists.txt
+@@ -4 +4,2 @@
+-pxr_plugin(usdShaders
++# Compile this core plugin into libopenusd's monolithic archive on every target.
++pxr_library(usdShaders TYPE PLUGIN
+--- a/cmake/defaults/gccclangshareddefaults.cmake
++++ b/cmake/defaults/gccclangshareddefaults.cmake
+@@ -41 +41,3 @@
+-if(CMAKE_USE_PTHREADS_INIT)
++# webR supplies its thread ABI in the target C++ flags. Finding a pthread
++# API in Emscripten's libc does not mean its linear memory is shared.
++if(CMAKE_USE_PTHREADS_INIT AND NOT EMSCRIPTEN)
+--- a/cmake/defaults/ProjectDefaults.cmake
++++ b/cmake/defaults/ProjectDefaults.cmake
+@@ -30,5 +30 @@
+-if(EMSCRIPTEN)
+-    set(EMSCRIPTEN_COMPILE_FLAGS "-fexceptions")
+-    add_compile_options("SHELL:${EMSCRIPTEN_COMPILE_FLAGS}")
+-    add_link_options("SHELL:${EMSCRIPTEN_COMPILE_FLAGS} -sALLOW_MEMORY_GROWTH=1")
+-endif()
++# libopenusd uses webR's configured WebAssembly exception ABI and link flags.
